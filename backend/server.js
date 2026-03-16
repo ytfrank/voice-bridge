@@ -41,56 +41,47 @@ app.get('/health', (req, res) => {
 
 /**
  * POST /api/transcribe
- * Proxy to Zhipu ASR API
- * Accepts: multipart/form-data with 'audio' field (.m4a file)
+ * Local Whisper transcription (no API needed)
+ * Accepts: multipart/form-data with 'audio' field
  * Returns: { text: "transcribed english text" }
  */
+const { exec: execCallback } = require('child_process');
+const { promisify } = require('util');
+const exec = promisify(execCallback);
+
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(req.file.path), {
-      filename: 'audio.m4a',
-      contentType: 'audio/m4a',
-    });
-    formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
-    formData.append('response_format', 'json');
-
-    const response = await fetch(
-      'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ZHIPU_API_KEY}`,
-          ...formData.getHeaders(),
-        },
-        body: formData,
-      }
+    const audioPath = req.file.path;
+    const scriptPath = path.join(__dirname, 'whisper_transcribe.py');
+    
+    // Call local Whisper Python script
+    const { stdout, stderr } = await exec(
+      `python3 "${scriptPath}" "${audioPath}" tiny`,
+      { timeout: 30000 } // 30s timeout
     );
 
     // Clean up temp file
-    fs.unlink(req.file.path, () => {});
+    fs.unlink(audioPath, () => {});
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('ASR API error:', response.status, errText);
-      return res.status(response.status).json({
-        error: 'ASR API error',
-        detail: errText,
+    const result = JSON.parse(stdout.trim());
+    
+    if (!result.success) {
+      console.error('Whisper error:', result.error);
+      return res.status(500).json({ 
+        error: 'Transcription failed', 
+        detail: result.error 
       });
     }
 
-    const data = await response.json();
-    res.json({ text: data.text || '' });
+    res.json({ text: result.text });
   } catch (err) {
     console.error('Transcribe error:', err);
-    // Clean up temp file on error
     if (req.file) fs.unlink(req.file.path, () => {});
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', detail: err.message });
   }
 });
 
