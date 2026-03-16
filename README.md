@@ -17,7 +17,7 @@
 |------|------|
 | 框架 | React Native + Expo SDK 51 |
 | 录音 | expo-av（.m4a，2.5s分块） |
-| 语音转文字 | 智谱 ASR API（via BFF） |
+| 语音转文字 | **本地 Whisper (faster-whisper)** |
 | 翻译+生词 | GLM-4-flash（via BFF） |
 | 状态管理 | zustand |
 | API代理 | Node.js Express BFF |
@@ -45,8 +45,12 @@ BFF_PORT=3001
 ### 3. 启动 BFF 后端
 
 ```bash
-cd backend && npm start
+cd backend
+source venv/bin/activate  # 激活Python环境
+npm start
 ```
+
+**首次运行**会自动下载 Whisper tiny 模型 (~75MB)。
 
 ### 4. 启动 Expo 开发服务器
 
@@ -97,7 +101,7 @@ voice-bridge/
 
 ```
 麦克风 → expo-av录音 → 2.5s分块
-→ BFF代理 → 智谱ASR → 英文文字（上半屏实时显示）
+→ BFF代理 → 本地Whisper → 英文文字（上半屏实时显示）
 → 句子完整判断（句号/停顿）
 → BFF代理 → GLM-4-flash → 中文翻译+生词（下半屏显示）
 ```
