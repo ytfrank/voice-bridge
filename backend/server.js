@@ -41,43 +41,50 @@ app.get('/health', (req, res) => {
 
 /**
  * POST /api/transcribe
- * Local Whisper transcription (no API needed)
- * Accepts: multipart/form-data with 'audio' field
+ * Zhipu glm-asr transcription
+ * Accepts: multipart/form-data with 'audio' field (WAV format)
  * Returns: { text: "transcribed english text" }
  */
-const { exec: execCallback } = require('child_process');
-const { promisify } = require('util');
-const exec = promisify(execCallback);
-
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    const audioPath = req.file.path;
-    const scriptPath = path.join(__dirname, 'whisper_transcribe.py');
-    
-    // Call local Whisper Python script
-    const { stdout, stderr } = await exec(
-      `python3 "${scriptPath}" "${audioPath}" tiny`,
-      { timeout: 30000 } // 30s timeout
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(req.file.path), {
+      filename: 'audio.wav',
+      contentType: 'audio/wav',
+    });
+    formData.append('model', 'glm-asr');
+    formData.append('language', 'en');
+
+    const response = await fetch(
+      'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ZHIPU_API_KEY}`,
+          ...formData.getHeaders(),
+        },
+        body: formData,
+      }
     );
 
     // Clean up temp file
-    fs.unlink(audioPath, () => {});
+    fs.unlink(req.file.path, () => {});
 
-    const result = JSON.parse(stdout.trim());
-    
-    if (!result.success) {
-      console.error('Whisper error:', result.error);
-      return res.status(500).json({ 
-        error: 'Transcription failed', 
-        detail: result.error 
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('ASR API error:', response.status, errText);
+      return res.status(response.status).json({
+        error: 'ASR API error',
+        detail: errText,
       });
     }
 
-    res.json({ text: result.text });
+    const data = await response.json();
+    res.json({ text: data.text || '' });
   } catch (err) {
     console.error('Transcribe error:', err);
     if (req.file) fs.unlink(req.file.path, () => {});
