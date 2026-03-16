@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "VoiceBridge",
+    "slug": "voice-bridge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "voice-bridge",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0a"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.voicebridge.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "VoiceBridge需要使用麦克风来录制语音并进行实时翻译。"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "com.voicebridge.app",
+      "permissions": ["RECORD_AUDIO", "INTERNET"]
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
