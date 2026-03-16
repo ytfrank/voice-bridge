@@ -1,13 +1,13 @@
 /**
  * VoiceBridge BFF (Backend for Frontend)
- * Proxies requests to Zhipu API, keeping API key secure.
+ * Uses local Whisper for ASR, Zhipu GLM-4-flash for translation.
  */
 
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fetch = require('node-fetch');
-const FormData = require('form-data');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -18,11 +18,11 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const app = express();
 const PORT = process.env.BFF_PORT || 3001;
 const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
+const WHISPER_MODEL = process.env.WHISPER_MODEL || 'tiny';
 
-if (!ZHIPU_API_KEY) {
-  console.error('❌ ZHIPU_API_KEY not set! Set it in .env or environment.');
-  process.exit(1);
-}
+// Venv python path
+const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
+const WHISPER_SCRIPT = path.join(__dirname, 'local_whisper.py');
 
 // Middleware
 app.use(cors());
@@ -36,13 +36,58 @@ const upload = multer({
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    whisper: WHISPER_MODEL,
+    python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system'
+  });
 });
 
 /**
+ * Call local Whisper Python script
+ */
+function callLocalWhisper(audioPath) {
+  return new Promise((resolve, reject) => {
+    const python = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
+    const proc = spawn(python, [WHISPER_SCRIPT, audioPath], {
+      env: { ...process.env, WHISPER_MODEL }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => { stdout += data; });
+    proc.stderr.on('data', (data) => { stderr += data; });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Whisper failed: ${stderr || stdout}`));
+      } else {
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (e) {
+          reject(new Error(`Invalid JSON from Whisper: ${stdout}`));
+        }
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(err);
+    });
+
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      proc.kill();
+      reject(new Error('Whisper timeout'));
+    }, 30000);
+  });
+}
+
+/**
  * POST /api/transcribe
- * Zhipu glm-asr transcription
- * Accepts: multipart/form-data with 'audio' field (WAV format)
+ * Local Whisper transcription
+ * Accepts: multipart/form-data with 'audio' field (WAV/MP3/M4A format)
  * Returns: { text: "transcribed english text" }
  */
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
@@ -51,42 +96,23 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(req.file.path), {
-      filename: 'audio.wav',
-      contentType: 'audio/wav',
-    });
-    formData.append('model', 'glm-asr');
-    formData.append('language', 'en');
+    const audioPath = req.file.path;
+    console.log(`[Transcribe] Processing: ${audioPath}`);
 
-    const response = await fetch(
-      'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ZHIPU_API_KEY}`,
-          ...formData.getHeaders(),
-        },
-        body: formData,
-      }
-    );
+    const result = await callLocalWhisper(audioPath);
 
     // Clean up temp file
-    fs.unlink(req.file.path, () => {});
+    fs.unlink(audioPath, () => {});
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('ASR API error:', response.status, errText);
-      return res.status(response.status).json({
-        error: 'ASR API error',
-        detail: errText,
-      });
+    if (!result.success) {
+      console.error('[Transcribe] Error:', result.error);
+      return res.status(500).json({ error: result.error || 'Transcription failed' });
     }
 
-    const data = await response.json();
-    res.json({ text: data.text || '' });
+    console.log(`[Transcribe] Result: "${result.text}"`);
+    res.json({ text: result.text || '' });
   } catch (err) {
-    console.error('Transcribe error:', err);
+    console.error('[Transcribe] Error:', err);
     if (req.file) fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: 'Internal server error', detail: err.message });
   }
@@ -103,6 +129,10 @@ app.post('/api/translate', async (req, res) => {
     const { text } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'No text provided' });
+    }
+
+    if (!ZHIPU_API_KEY) {
+      return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
     }
 
     const systemPrompt = `你是一位专业的英语翻译和教学助手。请对以下英文进行：
@@ -195,6 +225,10 @@ app.post('/api/translate/stream', async (req, res) => {
       return res.status(400).json({ error: 'No text provided' });
     }
 
+    if (!ZHIPU_API_KEY) {
+      return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -255,5 +289,11 @@ app.post('/api/translate/stream', async (req, res) => {
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 VoiceBridge BFF running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 API Key: ${ZHIPU_API_KEY.slice(0, 8)}...`);
+  console.log(`🎤 Local Whisper: model=${WHISPER_MODEL}`);
+  console.log(`🐍 Python: ${fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'system python3'}`);
+  if (ZHIPU_API_KEY) {
+    console.log(`📡 GLM API Key: ${ZHIPU_API_KEY.slice(0, 8)}...`);
+  } else {
+    console.log(`⚠️ GLM API Key: not configured (translation disabled)`);
+  }
 });
