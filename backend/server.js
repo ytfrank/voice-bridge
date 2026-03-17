@@ -1,6 +1,7 @@
 /**
  * VoiceBridge BFF (Backend for Frontend)
  * Uses local Whisper for ASR, Zhipu GLM-4-flash for translation.
+ * Multi-worker Whisper processing for parallel ASR.
  */
 
 const express = require('express');
@@ -19,6 +20,7 @@ const app = express();
 const PORT = process.env.BFF_PORT || 3001;
 const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
 const WHISPER_MODEL = process.env.WHISPER_MODEL || 'tiny';
+const WHISPER_WORKERS = parseInt(process.env.WHISPER_WORKERS || '3', 10);
 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
@@ -34,23 +36,32 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    whisper: WHISPER_MODEL,
-    python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system'
-  });
-});
+// Whisper worker pool
+class WhisperWorkerPool {
+  constructor(maxWorkers) {
+    this.maxWorkers = maxWorkers;
+    this.activeWorkers = 0;
+    this.queue = [];
+  }
 
-/**
- * Call local Whisper Python script
- */
-function callLocalWhisper(audioPath) {
-  return new Promise((resolve, reject) => {
+  async process(audioPath) {
+    return new Promise((resolve, reject) => {
+      const task = { audioPath, resolve, reject };
+      
+      if (this.activeWorkers < this.maxWorkers) {
+        this._runTask(task);
+      } else {
+        this.queue.push(task);
+      }
+    });
+  }
+
+  _runTask(task) {
+    this.activeWorkers++;
+    console.log(`[WhisperPool] Starting worker (${this.activeWorkers}/${this.maxWorkers})`);
+
     const python = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
-    const proc = spawn(python, [WHISPER_SCRIPT, audioPath], {
+    const proc = spawn(python, [WHISPER_SCRIPT, task.audioPath], {
       env: { ...process.env, WHISPER_MODEL }
     });
 
@@ -60,35 +71,65 @@ function callLocalWhisper(audioPath) {
     proc.stdout.on('data', (data) => { stdout += data; });
     proc.stderr.on('data', (data) => { stderr += data; });
 
+    const timeout = setTimeout(() => {
+      proc.kill();
+      this._complete(task, new Error('Whisper timeout'));
+    }, 30000);
+
     proc.on('close', (code) => {
+      clearTimeout(timeout);
       if (code !== 0) {
-        reject(new Error(`Whisper failed: ${stderr || stdout}`));
+        this._complete(task, new Error(`Whisper failed: ${stderr || stdout}`));
       } else {
         try {
-          resolve(JSON.parse(stdout));
+          const result = JSON.parse(stdout);
+          this._complete(task, null, result);
         } catch (e) {
-          reject(new Error(`Invalid JSON from Whisper: ${stdout}`));
+          this._complete(task, new Error(`Invalid JSON from Whisper: ${stdout}`));
         }
       }
     });
 
     proc.on('error', (err) => {
-      reject(err);
+      clearTimeout(timeout);
+      this._complete(task, err);
     });
+  }
 
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      proc.kill();
-      reject(new Error('Whisper timeout'));
-    }, 30000);
-  });
+  _complete(task, error, result) {
+    this.activeWorkers--;
+    console.log(`[WhisperPool] Worker done (${this.activeWorkers}/${this.maxWorkers})`);
+    
+    if (error) {
+      task.reject(error);
+    } else {
+      task.resolve(result);
+    }
+
+    // Process next task in queue
+    if (this.queue.length > 0 && this.activeWorkers < this.maxWorkers) {
+      const nextTask = this.queue.shift();
+      this._runTask(nextTask);
+    }
+  }
 }
+
+const whisperPool = new WhisperWorkerPool(WHISPER_WORKERS);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    whisper: WHISPER_MODEL,
+    whisperWorkers: WHISPER_WORKERS,
+    python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system'
+  });
+});
 
 /**
  * POST /api/transcribe
- * Local Whisper transcription
- * Accepts: multipart/form-data with 'audio' field (WAV/MP3/M4A format)
- * Returns: { text: "transcribed english text" }
+ * Local Whisper transcription (parallel via worker pool)
  */
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
@@ -97,9 +138,9 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     }
 
     const audioPath = req.file.path;
-    console.log(`[Transcribe] Processing: ${audioPath}`);
+    console.log(`[Transcribe] Queuing: ${audioPath}`);
 
-    const result = await callLocalWhisper(audioPath);
+    const result = await whisperPool.process(audioPath);
 
     // Clean up temp file
     fs.unlink(audioPath, () => {});
@@ -121,8 +162,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 /**
  * POST /api/translate
  * Proxy to Zhipu GLM-4-flash for translation + vocabulary
- * Accepts: { text: "english text to translate" }
- * Returns: { translation: "中文翻译", words: [...] }
  */
 app.post('/api/translate', async (req, res) => {
   try {
@@ -191,13 +230,11 @@ app.post('/api/translate', async (req, res) => {
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '{}';
 
-    // Parse JSON response from GLM
     let parsed;
     try {
       const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       parsed = JSON.parse(jsonStr);
     } catch {
-      // Fallback: treat entire content as translation
       parsed = {
         translation: content,
         words: [],
@@ -262,7 +299,6 @@ app.post('/api/translate/stream', async (req, res) => {
       return;
     }
 
-    // Pipe the SSE stream
     response.body.on('data', (chunk) => {
       res.write(chunk);
     });
@@ -276,7 +312,6 @@ app.post('/api/translate/stream', async (req, res) => {
       res.end();
     });
 
-    // Handle client disconnect
     req.on('close', () => {
       response.body.destroy();
     });
@@ -289,7 +324,7 @@ app.post('/api/translate/stream', async (req, res) => {
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 VoiceBridge BFF running on http://0.0.0.0:${PORT}`);
-  console.log(`🎤 Local Whisper: model=${WHISPER_MODEL}`);
+  console.log(`🎤 Local Whisper: model=${WHISPER_MODEL}, workers=${WHISPER_WORKERS}`);
   console.log(`🐍 Python: ${fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'system python3'}`);
   if (ZHIPU_API_KEY) {
     console.log(`📡 GLM API Key: ${ZHIPU_API_KEY.slice(0, 8)}...`);

@@ -2,8 +2,8 @@
  * Audio recording configuration constants
  */
 
-// Chunk duration in milliseconds (1.5 seconds per chunk)
-export const CHUNK_DURATION_MS = 1500;
+// Chunk duration in milliseconds (1 second per chunk for faster display)
+export const CHUNK_DURATION_MS = 1000;
 
 // Recording options for expo-av (.m4a format)
 export const RECORDING_OPTIONS = {
