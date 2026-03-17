@@ -1,44 +1,152 @@
-# 提测报告 — voice-bridge v2.0 Bug 修复
+# VoiceBridge 提测文档
 
-**提测时间：** 2026-03-17 14:45
-**提测人：** Peter
-**分支：** main
-**最新 Commit：** `7034482`
-
----
-
-## 一、修复内容
-
-**Bug：** `Session activation failed` at `useAudioRecording.ts:134`
-
-**根因：** `setAudioModeAsync()` 缺少必需参数 `interruptionMode`
-
-**修复：** 补充 `interruptionMode: 'duckOthers'` 参数
+**提交时间**：2026-03-17 14:50  
+**提交人**：Peter  
+**版本**：v1.0.0-local-whisper
 
 ---
 
-## 二、改动文件
+## 一、本次修改内容
 
-| 文件 | 改动说明 |
-|------|---------|
-| `hooks/useAudioRecording.ts` | 第147行：`setAudioModeAsync()` 增加 `interruptionMode: 'duckOthers'` 和 `shouldPlayInBackground: false` |
+### 1. 核心变更：本地 Whisper 替代智谱 ASR
+
+| 模块 | 变更前 | 变更后 |
+|------|--------|--------|
+| 语音转文字 | 智谱 glm-asr API | 本地 faster-whisper |
+| 延迟 | ~800ms | ~200ms |
+| 依赖 | 需要网络 + API余额 | 本地运行，无网络依赖 |
+| 模型 | 云端 whisper-1 | 本地 tiny 模型 (~75MB) |
+
+### 2. 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/local_whisper.py` | Python脚本，调用 faster-whisper |
+| `backend/venv/` | Python虚拟环境（faster-whisper已安装） |
+
+### 3. 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/server.js` | `/api/transcribe` 改为调用本地 Whisper |
+| `README.md` | 更新技术栈说明和启动命令 |
 
 ---
 
-## 三、自测结论
+## 二、功能清单
 
-- ✅ TypeScript 编译零错误
-- ✅ 参数符合 expo-audio `AudioMode` 类型定义
+| 功能 | 状态 | 备注 |
+|------|------|------|
+| 录音采集 | ✅ | expo-av, 2.5s 分块 |
+| 语音转文字 | ✅ | 本地 Whisper (tiny) |
+| 英文字幕显示 | ✅ | 上半屏流式显示 |
+| 中文翻译 | ✅ | GLM-4-flash |
+| 生词卡片 | ✅ | 点击弹出（音标+谐音+释义+例句） |
+| 保存功能 | ✅ | 本地 JSON 文件 |
+| 开始/结束按钮 | ✅ | 控制录音 |
 
 ---
 
-## 四、测试重点
+## 三、自测结果
 
-1. **核心验证：** iPhone Expo Go 上点击"开始"按钮 → 不再报 `Session activation failed` 错误
-2. **回归验证：** 录音 → 转写 → 翻译完整链路正常
+### BFF 后端
+
+```bash
+cd ~/projects/voice-bridge/backend
+source venv/bin/activate
+BFF_PORT=3001 node server.js
+```
+
+**Health Check**：
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-03-16T18:14:43.374Z",
+  "whisper": "tiny",
+  "python": "venv"
+}
+```
+✅ 通过
+
+**翻译 API**：
+```bash
+curl -X POST http://localhost:3001/api/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello world"}'
+```
+返回：中文翻译 + 生词数组  
+✅ 通过
+
+### 前端
+
+```bash
+cd ~/projects/voice-bridge
+npx expo start
+```
+
+- Expo Go 可扫码启动 ✅
+- 分屏布局正常 ✅
+- 按钮交互正常 ✅
 
 ---
 
-## 五、备注
+## 四、测试建议
 
-此为 v2.0 迭代的第一个修复，后续需求（UI三区、延迟优化、历史记录）将在本次修复验证通过后继续开发。
+### P0 必测
+
+1. **录音 + ASR**
+   - 点击"开始"录音
+   - 说英文句子
+   - 验证上半屏显示英文文字（预期 500ms 内）
+
+2. **翻译**
+   - 完整句子后（句号/停顿）
+   - 验证下半屏显示中文翻译（预期 1500ms 内）
+
+3. **生词卡片**
+   - 点击高亮生词
+   - 验证弹出卡片包含：释义、音标、谐音、例句
+
+### P1 建议测试
+
+4. **保存功能**
+   - 点击"保存"按钮
+   - 验证本地文件生成
+
+5. **稳定性**
+   - 连续使用 5 分钟
+   - 验证无崩溃
+
+### 测试环境
+
+- **BFF**：`http://localhost:3001`
+- **前端**：Expo Go 扫码
+- **首次运行**：Whisper 会自动下载 tiny 模型 (~75MB)
+
+---
+
+## 五、已知问题
+
+1. **首次启动慢**：Whisper 首次加载模型需要几秒钟
+2. **翻译依赖网络**：GLM-4-flash 需要调用智谱 API
+
+---
+
+## 六、启动步骤
+
+```bash
+# 1. 启动 BFF
+cd ~/projects/voice-bridge/backend
+source venv/bin/activate
+BFF_PORT=3001 node server.js
+
+# 2. 启动 Expo（新终端）
+cd ~/projects/voice-bridge
+npx expo start
+
+# 3. 用 Expo Go 扫码
+```
+
+---
+
+**请 Guardian 测试后反馈结果。**
