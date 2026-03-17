@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-03-17T03:17:29.375154+00:00",
-  "base_url": "http://localhost:3002",
+  "generated_at": "2026-03-17T07:18:26.913988+00:00",
+  "base_url": "http://localhost:3001",
   "summary": {
     "total": 17,
     "passed": 17,
@@ -10,27 +10,27 @@
   "performance": {
     "transcribe_latency_ms": {
       "count": 5,
-      "avg_ms": 2114.09,
-      "min_ms": 1855.41,
-      "max_ms": 2957.55
+      "avg_ms": 2406.24,
+      "min_ms": 1948.36,
+      "max_ms": 2848.82
     },
     "translate_latency_ms": {
       "count": 3,
-      "avg_ms": 11804.88,
-      "min_ms": 4736.72,
-      "max_ms": 19475.85
+      "avg_ms": 11834.94,
+      "min_ms": 6971.93,
+      "max_ms": 19474.96
     },
     "stream_first_chunk_latency_ms": {
       "count": 1,
-      "avg_ms": 397.66,
-      "min_ms": 397.66,
-      "max_ms": 397.66
+      "avg_ms": 332.71,
+      "min_ms": 332.71,
+      "max_ms": 332.71
     },
     "stream_total_latency_ms": {
       "count": 1,
-      "avg_ms": 488.47,
-      "min_ms": 488.47,
-      "max_ms": 488.47
+      "avg_ms": 445.51,
+      "min_ms": 445.51,
+      "max_ms": 445.51
     }
   },
   "results": [
@@ -38,27 +38,27 @@
       "name": "BFF 健康检查",
       "passed": true,
       "detail": "服务正常运行",
-      "duration_ms": 4.54,
-      "timestamp": "2026-03-17T03:16:40.297009+00:00"
+      "duration_ms": 4.75,
+      "timestamp": "2026-03-17T07:17:36.301137+00:00"
     },
     {
       "name": "ASR 转写: 标准 WAV",
       "passed": true,
       "detail": "转写结果: Hello, how are you today?",
-      "duration_ms": 2957.55,
-      "timestamp": "2026-03-17T03:16:43.254799+00:00",
+      "duration_ms": 2848.82,
+      "timestamp": "2026-03-17T07:17:39.150200+00:00",
       "metrics": {
-        "transcribe_latency_ms": 2957.55
+        "transcribe_latency_ms": 2848.82
       }
     },
     {
       "name": "ASR 格式边界: wav",
       "passed": true,
       "detail": "wav 被服务接受",
-      "duration_ms": 1855.41,
-      "timestamp": "2026-03-17T03:16:45.110344+00:00",
+      "duration_ms": 1948.36,
+      "timestamp": "2026-03-17T07:17:41.098688+00:00",
       "metrics": {
-        "transcribe_latency_ms": 1855.41
+        "transcribe_latency_ms": 1948.36
       },
       "extra": {
         "status_code": 200,
@@ -69,10 +69,10 @@
       "name": "ASR 格式边界: m4a",
       "passed": true,
       "detail": "m4a 被服务接受",
-      "duration_ms": 1948.23,
-      "timestamp": "2026-03-17T03:16:47.058611+00:00",
+      "duration_ms": 1983.38,
+      "timestamp": "2026-03-17T07:17:43.082109+00:00",
       "metrics": {
-        "transcribe_latency_ms": 1948.23
+        "transcribe_latency_ms": 1983.38
       },
       "extra": {
         "status_code": 200,
@@ -83,10 +83,10 @@
       "name": "ASR 格式边界: mp3",
       "passed": true,
       "detail": "mp3 被服务接受",
-      "duration_ms": 1886.64,
-      "timestamp": "2026-03-17T03:16:48.945286+00:00",
+      "duration_ms": 2712.74,
+      "timestamp": "2026-03-17T07:17:45.794892+00:00",
       "metrics": {
-        "transcribe_latency_ms": 1886.64
+        "transcribe_latency_ms": 2712.74
       },
       "extra": {
         "status_code": 200,
@@ -97,10 +97,10 @@
       "name": "ASR 格式边界: ogg",
       "passed": true,
       "detail": "ogg 被服务接受",
-      "duration_ms": 1922.64,
-      "timestamp": "2026-03-17T03:16:50.867969+00:00",
+      "duration_ms": 2537.9,
+      "timestamp": "2026-03-17T07:17:48.332830+00:00",
       "metrics": {
-        "transcribe_latency_ms": 1922.64
+        "transcribe_latency_ms": 2537.9
       },
       "extra": {
         "status_code": 200,
@@ -111,15 +111,15 @@
       "name": "ASR 错误边界: 缺失音频",
       "passed": true,
       "detail": "返回 400",
-      "duration_ms": 1.34,
-      "timestamp": "2026-03-17T03:16:50.869341+00:00"
+      "duration_ms": 1.35,
+      "timestamp": "2026-03-17T07:17:48.334214+00:00"
     },
     {
       "name": "ASR 错误边界: 超大音频",
       "passed": true,
       "detail": "返回 500",
-      "duration_ms": 5.77,
-      "timestamp": "2026-03-17T03:16:50.875385+00:00",
+      "duration_ms": 5.53,
+      "timestamp": "2026-03-17T07:17:48.340045+00:00",
       "extra": {
         "status_code": 500
       }
@@ -128,45 +128,45 @@
       "name": "翻译接口: Hello, how are you?",
       "passed": true,
       "detail": "翻译: 你好，你怎么样？",
-      "duration_ms": 11202.07,
-      "timestamp": "2026-03-17T03:17:02.077702+00:00",
+      "duration_ms": 9057.93,
+      "timestamp": "2026-03-17T07:17:57.398204+00:00",
       "metrics": {
-        "translate_latency_ms": 11202.07
+        "translate_latency_ms": 9057.93
       }
     },
     {
       "name": "翻译接口: The weather is nice ",
       "passed": true,
-      "detail": "翻译: 今天天气很好。",
-      "duration_ms": 4736.72,
-      "timestamp": "2026-03-17T03:17:06.814786+00:00",
+      "detail": "翻译: 今天的天气很好。",
+      "duration_ms": 6971.93,
+      "timestamp": "2026-03-17T07:18:04.370528+00:00",
       "metrics": {
-        "translate_latency_ms": 4736.72
+        "translate_latency_ms": 6971.93
       }
     },
     {
       "name": "翻译接口: 超长文本",
       "passed": true,
-      "detail": "输入长度: 16560, 输出长度: 40",
-      "duration_ms": 19475.85,
-      "timestamp": "2026-03-17T03:17:26.291041+00:00",
+      "detail": "输入长度: 16560, 输出长度: 41",
+      "duration_ms": 19474.96,
+      "timestamp": "2026-03-17T07:18:23.845908+00:00",
       "metrics": {
-        "translate_latency_ms": 19475.85
+        "translate_latency_ms": 19474.96
       },
       "extra": {
         "input_chars": 16560,
-        "output_chars": 40
+        "output_chars": 41
       }
     },
     {
       "name": "流式翻译接口",
       "passed": true,
-      "detail": "首包 397.66ms, 总耗时 488.47ms",
-      "duration_ms": 488.47,
-      "timestamp": "2026-03-17T03:17:26.779735+00:00",
+      "detail": "首包 332.71ms, 总耗时 445.51ms",
+      "duration_ms": 445.51,
+      "timestamp": "2026-03-17T07:18:24.291658+00:00",
       "metrics": {
-        "stream_first_chunk_latency_ms": 397.66,
-        "stream_total_latency_ms": 488.47
+        "stream_first_chunk_latency_ms": 332.71,
+        "stream_total_latency_ms": 445.51
       },
       "extra": {
         "output_chars": 7
@@ -176,36 +176,36 @@
       "name": "翻译错误边界: 空字符串",
       "passed": true,
       "detail": "返回 400",
-      "duration_ms": 4.81,
-      "timestamp": "2026-03-17T03:17:26.784753+00:00"
+      "duration_ms": 5.22,
+      "timestamp": "2026-03-17T07:18:24.297141+00:00"
     },
     {
       "name": "翻译错误边界: 空白字符串",
       "passed": true,
       "detail": "返回 400",
-      "duration_ms": 3.07,
-      "timestamp": "2026-03-17T03:17:26.787940+00:00"
+      "duration_ms": 3.12,
+      "timestamp": "2026-03-17T07:18:24.300383+00:00"
     },
     {
       "name": "翻译错误边界: 缺失字段",
       "passed": true,
       "detail": "返回 400",
-      "duration_ms": 2.45,
-      "timestamp": "2026-03-17T03:17:26.790474+00:00"
+      "duration_ms": 2.94,
+      "timestamp": "2026-03-17T07:18:24.303428+00:00"
     },
     {
       "name": "翻译错误边界: null 文本",
       "passed": true,
       "detail": "返回 400",
-      "duration_ms": 2.05,
-      "timestamp": "2026-03-17T03:17:26.792604+00:00"
+      "duration_ms": 2.51,
+      "timestamp": "2026-03-17T07:18:24.306039+00:00"
     },
     {
       "name": "完整链路 (ASR -> 翻译)",
       "passed": true,
       "detail": "输入文本: Hello, how are you today?",
-      "duration_ms": 2581.79,
-      "timestamp": "2026-03-17T03:17:29.374549+00:00"
+      "duration_ms": 2607.1,
+      "timestamp": "2026-03-17T07:18:26.913316+00:00"
     }
   ]
 }
