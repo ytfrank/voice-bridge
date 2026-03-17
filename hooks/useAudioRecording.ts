@@ -1,21 +1,50 @@
 /**
  * useAudioRecording - manages audio recording with chunking
+ * Uses expo-audio (replaces deprecated expo-av)
  * Records in .m4a format, splits into 2.5s chunks for ASR processing.
  */
 
 import { useRef, useCallback } from 'react';
-import { Audio } from 'expo-av';
-import { CHUNK_DURATION_MS, RECORDING_OPTIONS } from '../constants/audio';
+import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
+import { CHUNK_DURATION_MS } from '../constants/audio';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
 import { translateText } from '../services/translationService';
 import { SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
 
+// Recording options for expo-audio
+const recordingOptions: RecordingOptions = {
+  extension: '.m4a',
+  sampleRate: 44100,
+  numberOfChannels: 1,
+  bitRate: 128000,
+  android: {
+    extension: '.m4a',
+    outputFormat: 'mpeg4',
+    audioEncoder: 'aac',
+    sampleRate: 44100,
+  },
+  ios: {
+    extension: '.m4a',
+    outputFormat: IOSOutputFormat.MPEG4AAC,
+    audioQuality: AudioQuality.MAX,
+    sampleRate: 44100,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+  web: {
+    mimeType: 'audio/webm',
+    bitsPerSecond: 128000,
+  },
+};
+
 export function useAudioRecording() {
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recorder = useAudioRecorder(recordingOptions);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sentenceBufferRef = useRef<string>('');
   const lastTextTimeRef = useRef<number>(0);
+  const isRecordingRef = useRef(false);
 
   const {
     setRecording,
@@ -75,7 +104,7 @@ export function useAudioRecording() {
    * Cycle recording: stop current, start new, process chunk async
    */
   const cycleRecording = useCallback(async () => {
-    if (!recordingRef.current) return;
+    if (!isRecordingRef.current) return;
 
     try {
       // Check for pause-based sentence boundary
@@ -87,49 +116,41 @@ export function useAudioRecording() {
         processSentence(sentence);
       }
 
-      // Stop current recording
-      const currentRecording = recordingRef.current;
-      await currentRecording.stopAndUnloadAsync();
-      const uri = currentRecording.getURI();
-
-      // Immediately start new recording
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        RECORDING_OPTIONS as any
-      );
-      recordingRef.current = newRecording;
+      // Stop current recording, get URI from recorder property
+      await recorder.stop();
+      const uri = recorder.uri;
+      isRecordingRef.current = false;
 
       // Process the completed chunk asynchronously
       if (uri) {
         processChunk(uri).catch(console.error);
       }
+
+      // Immediately start new recording
+      await recorder.prepareToRecordAsync(recordingOptions);
+      recorder.record();
+      isRecordingRef.current = true;
     } catch (err) {
       console.error('Cycle recording error:', err);
     }
-  }, [processChunk, clearCurrentTranscript, processSentence]);
+  }, [recorder, processChunk, clearCurrentTranscript, processSentence]);
 
   /**
    * Start recording
    */
   const startRecording = useCallback(async () => {
     try {
-      // Request permissions
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) {
-        console.error('Microphone permission not granted');
-        return;
-      }
-
-      // Configure audio mode
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      // Configure audio mode for iOS
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      // Start first recording
-      const { recording } = await Audio.Recording.createAsync(
-        RECORDING_OPTIONS as any
-      );
-      recordingRef.current = recording;
+      // Prepare and start recording
+      await recorder.prepareToRecordAsync(recordingOptions);
+      recorder.record();
+      isRecordingRef.current = true;
+
       sentenceBufferRef.current = '';
       lastTextTimeRef.current = Date.now();
       setRecording(true);
@@ -140,7 +161,7 @@ export function useAudioRecording() {
       console.error('Start recording error:', err);
       setRecording(false);
     }
-  }, [setRecording, cycleRecording]);
+  }, [recorder, setRecording, cycleRecording]);
 
   /**
    * Stop recording
@@ -154,11 +175,10 @@ export function useAudioRecording() {
       }
 
       // Stop recording
-      if (recordingRef.current) {
-        const currentRecording = recordingRef.current;
-        recordingRef.current = null;
-        await currentRecording.stopAndUnloadAsync();
-        const uri = currentRecording.getURI();
+      if (isRecordingRef.current) {
+        await recorder.stop();
+        const uri = recorder.uri;
+        isRecordingRef.current = false;
 
         // Process final chunk
         if (uri) {
@@ -179,7 +199,7 @@ export function useAudioRecording() {
       console.error('Stop recording error:', err);
       setRecording(false);
     }
-  }, [setRecording, processChunk, clearCurrentTranscript, processSentence]);
+  }, [recorder, setRecording, processChunk, clearCurrentTranscript, processSentence]);
 
   return { startRecording, stopRecording };
 }
