@@ -9,7 +9,7 @@ import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat,
 import { CHUNK_DURATION_MS } from '../constants/audio';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
-import { translateText, translateTextStream } from '../services/translationService';
+import { translateText } from '../services/translationService';
 import { SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
 
 // Recording options for expo-audio
@@ -52,7 +52,6 @@ export function useAudioRecording() {
     addTranscriptLine,
     addTranslation,
     updateTranslation,
-    addStreamingTranslation,
     setTranslating,
     clearCurrentTranscript,
   } = useTranscriptStore();
@@ -77,12 +76,7 @@ export function useAudioRecording() {
     });
 
     try {
-      // Stream translation text for fast feedback
-      await translateTextStream(sentence.trim(), (partial) => {
-        addStreamingTranslation(id, partial);
-      });
-
-      // Fetch full translation + words for final result
+      // Single API call: get translation + words together
       const result = await translateText(sentence.trim());
       updateTranslation(id, {
         chineseTranslation: result.translation,
@@ -90,10 +84,11 @@ export function useAudioRecording() {
       });
     } catch (err) {
       console.error('Translation failed:', err);
+      updateTranslation(id, { chineseTranslation: '翻译失败' });
     } finally {
       setTranslating(false);
     }
-  }, [addTranscriptLine, addTranslation, updateTranslation, addStreamingTranslation, setTranslating]);
+  }, [addTranscriptLine, addTranslation, updateTranslation, setTranslating]);
 
   /**
    * Process an audio chunk - transcribe and detect sentences
