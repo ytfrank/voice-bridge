@@ -1,7 +1,7 @@
 # 技术方案 — voice-bridge v2.0
 
-**编写人：** Peter（Tech Lead）  
-**日期：** 2026-03-17  
+**编写人：** Peter（Tech Lead）
+**日期：** 2026-03-17
 **状态：** 待确认（小叮当 + Guard）
 
 ---
@@ -55,7 +55,59 @@
 
 ---
 
-## 需求2：延迟优化【P1】
+## 需求2：Bug 修复 — Session activation failed【P0】
+
+### 问题定位
+**错误信息：** `Session activation failed`
+**位置：** `useAudioRecording.ts:134` → `recorder.record()`
+
+### 根因分析
+`setAudioModeAsync()` 调用时缺少必需参数 `interruptionMode`：
+
+```typescript
+// 当前代码（有问题）
+await setAudioModeAsync({
+  allowsRecording: true,
+  playsInSilentMode: true,
+  // ❌ 缺少 interruptionMode
+});
+```
+
+`AudioMode` 类型定义中 `interruptionMode` 是必需字段：
+- `'doNotMix'` - 独占音频焦点（其他 app 暂停）
+- `'duckOthers'` - 与其他音频共存，降低其他音量
+- `'mixWithOthers'` - 与其他音频混音
+
+### 修复方案
+
+```typescript
+import { setAudioModeAsync, InterruptionMode } from 'expo-audio';
+
+// 修复后
+await setAudioModeAsync({
+  allowsRecording: true,
+  playsInSilentMode: true,
+  interruptionMode: InterruptionMode.DuckOthers,  // ✅ 添加
+  shouldPlayInBackground: false,
+});
+```
+
+选择 `DuckOthers` 的原因：
+- 录音时可能有背景音乐，DuckOthers 让背景音乐降低音量但不中断
+- 如果用户在听音乐同时使用 app，体验更好
+
+### 修改文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `hooks/useAudioRecording.ts` | 修改 | 补充 `interruptionMode` 参数，导入 `InterruptionMode` 枚举 |
+
+### 风险点
+- 低风险，仅补充必需参数
+
+---
+
+## 需求3：延迟优化【P1】
 
 ### 现状分析
 当前延迟链路：
@@ -109,7 +161,7 @@
 
 ---
 
-## 需求3：历史记录功能【P1】
+## 需求4：历史记录功能【P1】
 
 ### 现状分析
 `saveService.ts` 已有保存/列表功能，但前端无历史页面。
@@ -154,45 +206,32 @@ app/
 
 ---
 
-## 需求4：Bug 修复【P0】
-
-### 现状
-需求文档提到波哥截图中有 Bug，需要获取截图确认具体问题。
-
-### 行动项
-- [ ] 向波哥获取 Bug 截图
-- [ ] 分析 Bug 根因
-- [ ] 补充修复方案到本文档
-
----
-
 ## 开发分工与排期
 
 | 优先级 | 需求 | 预估工作量 | 开发方式 |
 |--------|------|-----------|---------|
-| P0 | 需求4：Bug修复 | 视截图而定 | Peter 直接修 |
+| P0 | 需求2：Bug修复 | 小 | Peter 直接修 |
 | P0 | 需求1：UI三区布局 | 中 | Sub-Agent（Claude Code） |
-| P1 | 需求2：延迟优化 | 大 | Sub-Agent（Codex - backend, Claude Code - frontend） |
-| P1 | 需求3：历史记录 | 中 | Sub-Agent（Claude Code） |
+| P1 | 需求3：延迟优化 | 大 | Sub-Agent（Codex - backend, Claude Code - frontend） |
+| P1 | 需求4：历史记录 | 中 | Sub-Agent（Claude Code） |
 
 ### 开发顺序
-1. 先修 Bug（需求4）— 等截图
-2. UI 三区布局（需求1）— 不依赖其他需求
-3. 延迟优化（需求2）— 改动最大，放中间
-4. 历史记录（需求3）— 相对独立，最后做
+1. **Bug修复（需求2）** — 5分钟，立即修
+2. **UI三区布局（需求1）** — 不依赖其他需求
+3. **延迟优化（需求3）** — 改动最大，放中间
+4. **历史记录（需求4）** — 相对独立，最后做
 
 ### 总预估
-- 需求1 + 3：可并行，约 1-2 小时
-- 需求2：约 2-3 小时（含 BFF 改造 + 前端适配 + 调优）
-- 需求4：视 Bug 复杂度
+- 需求2：5 分钟
+- 需求1 + 4：可并行，约 1-2 小时
+- 需求3：约 2-3 小时（含 BFF 改造 + 前端适配 + 调优）
 
 ---
 
 ## 待确认事项
 
-1. **需求2**：如果 1.5s chunk 的 Whisper 准确率不够，是否接受切换到智谱云端 ASR API？（会增加 API 成本）
-2. **需求3**：历史详情页是否需要"继续录音"功能？还是只读查看？
-3. **需求4**：等波哥截图
+1. **需求3**：如果 1.5s chunk 的 Whisper 准确率不够，是否接受切换到智谱云端 ASR API？（会增加 API 成本）
+2. **需求4**：历史详情页是否需要"继续录音"功能？还是只读查看？
 
 ---
 
