@@ -2,7 +2,7 @@
  * Transcription service - sends audio to BFF for ASR
  */
 
-import * as FileSystem from 'expo-file-system';
+import { uploadAsync, FileSystemUploadType } from 'expo-file-system/legacy';
 import { API } from '../constants/api';
 
 /**
@@ -12,10 +12,10 @@ import { API } from '../constants/api';
  */
 export async function transcribeAudio(audioUri: string): Promise<string> {
   try {
-    const response = await FileSystem.uploadAsync(API.TRANSCRIBE, audioUri, {
+    const response = await uploadAsync(API.TRANSCRIBE, audioUri, {
       fieldName: 'audio',
       httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      uploadType: FileSystemUploadType.MULTIPART,
       mimeType: 'audio/m4a',
     });
 

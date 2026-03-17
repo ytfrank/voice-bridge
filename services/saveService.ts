@@ -2,18 +2,24 @@
  * Save service - saves transcript + translation to local file
  */
 
-import * as FileSystem from 'expo-file-system';
+import {
+  documentDirectory,
+  getInfoAsync,
+  makeDirectoryAsync,
+  writeAsStringAsync,
+  readDirectoryAsync,
+} from 'expo-file-system/legacy';
 import { TranslationEntry } from '../store/transcriptStore';
 
-const SAVE_DIR = `${FileSystem.documentDirectory}voice-bridge/`;
+const SAVE_DIR = `${documentDirectory}voice-bridge/`;
 
 /**
  * Ensure save directory exists
  */
 async function ensureDir() {
-  const info = await FileSystem.getInfoAsync(SAVE_DIR);
+  const info = await getInfoAsync(SAVE_DIR);
   if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(SAVE_DIR, { intermediates: true });
+    await makeDirectoryAsync(SAVE_DIR, { intermediates: true });
   }
 }
 
@@ -41,7 +47,7 @@ export async function saveSession(
     })),
   };
 
-  await FileSystem.writeAsStringAsync(filepath, JSON.stringify(data, null, 2));
+  await writeAsStringAsync(filepath, JSON.stringify(data, null, 2));
   return filepath;
 }
 
@@ -50,6 +56,6 @@ export async function saveSession(
  */
 export async function listSavedSessions(): Promise<string[]> {
   await ensureDir();
-  const files = await FileSystem.readDirectoryAsync(SAVE_DIR);
+  const files = await readDirectoryAsync(SAVE_DIR);
   return files.filter((f) => f.endsWith('.json')).sort().reverse();
 }
