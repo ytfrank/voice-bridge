@@ -144,6 +144,8 @@ export function useAudioRecording() {
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
       });
 
       // Prepare and start recording
