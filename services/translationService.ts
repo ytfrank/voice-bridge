@@ -42,3 +42,69 @@ export async function translateText(text: string): Promise<TranslationResult> {
     return { translation: '网络错误，翻译失败', words: [] };
   }
 }
+
+/**
+ * Stream translation text via SSE. Best-effort: if streaming unsupported, fallback to non-stream.
+ * Calls onUpdate with accumulated translation text.
+ */
+export async function translateTextStream(
+  text: string,
+  onUpdate: (partial: string) => void
+): Promise<string> {
+  try {
+    const response = await fetch(API.TRANSLATE_STREAM, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok || !response.body) {
+      const result = await translateText(text);
+      onUpdate(result.translation);
+      return result.translation;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.replace(/^data:\s*/, '');
+        if (data === '[DONE]') continue;
+
+        try {
+          const json = JSON.parse(data);
+          const delta =
+            json.choices?.[0]?.delta?.content ||
+            json.choices?.[0]?.message?.content ||
+            json.choices?.[0]?.text ||
+            '';
+          if (delta) {
+            fullText += delta;
+            onUpdate(fullText);
+          }
+        } catch {
+          // ignore malformed chunks
+        }
+      }
+    }
+
+    return fullText;
+  } catch (err) {
+    console.error('Stream translation failed:', err);
+    const result = await translateText(text);
+    onUpdate(result.translation);
+    return result.translation;
+  }
+}

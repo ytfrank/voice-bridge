@@ -1,5 +1,5 @@
 /**
- * ControlButtons - Start / Stop / Save buttons at bottom
+ * ControlButtons - Start / Stop / Save / History / New buttons at bottom
  */
 
 import React, { useState } from 'react';
@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Alert,
 } from 'react-native';
+import { router } from 'expo-router';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { useAudioRecording } from '../hooks/useAudioRecording';
 import { saveSession } from '../services/saveService';
@@ -44,6 +45,10 @@ export function ControlButtons() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleHistory = () => {
+    router.push('/history');
   };
 
   const handleNewSession = () => {
@@ -87,6 +92,15 @@ export function ControlButtons() {
         </Text>
       </TouchableOpacity>
 
+      {/* History button */}
+      <TouchableOpacity
+        style={[styles.button, styles.historyButton]}
+        onPress={handleHistory}
+      >
+        <Text style={styles.buttonEmoji}>📋</Text>
+        <Text style={styles.buttonText}>历史</Text>
+      </TouchableOpacity>
+
       {/* New Session */}
       <TouchableOpacity
         style={[styles.button, styles.newButton]}
@@ -103,9 +117,9 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     backgroundColor: '#0a0a0a',
     borderTopWidth: 0.5,
     borderTopColor: '#333',
@@ -114,10 +128,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 28,
-    minWidth: 90,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 24,
+    minWidth: 80,
   },
   startButton: {
     backgroundColor: '#2d6a4f',
@@ -128,16 +142,19 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: '#1565c0',
   },
+  historyButton: {
+    backgroundColor: '#4a4a4a',
+  },
   newButton: {
     backgroundColor: '#333',
   },
   buttonEmoji: {
-    fontSize: 18,
+    fontSize: 16,
     marginRight: 6,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
   },
 });

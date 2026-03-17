@@ -8,8 +8,20 @@ import {
   makeDirectoryAsync,
   writeAsStringAsync,
   readDirectoryAsync,
+  readAsStringAsync,
 } from 'expo-file-system/legacy';
 import { TranslationEntry } from '../store/transcriptStore';
+
+export interface SessionData {
+  savedAt: string;
+  transcriptLines: string[];
+  translations: Array<{
+    english: string;
+    chinese: string;
+    words: any[];
+    timestamp: number;
+  }>;
+}
 
 const SAVE_DIR = `${documentDirectory}voice-bridge/`;
 
@@ -58,4 +70,14 @@ export async function listSavedSessions(): Promise<string[]> {
   await ensureDir();
   const files = await readDirectoryAsync(SAVE_DIR);
   return files.filter((f) => f.endsWith('.json')).sort().reverse();
+}
+
+/**
+ * Load a saved session by filename
+ */
+export async function loadSession(filename: string): Promise<SessionData> {
+  await ensureDir();
+  const filepath = `${SAVE_DIR}${filename}`;
+  const json = await readAsStringAsync(filepath);
+  return JSON.parse(json) as SessionData;
 }

@@ -1,7 +1,7 @@
 /**
  * useAudioRecording - manages audio recording with chunking
  * Uses expo-audio (replaces deprecated expo-av)
- * Records in .m4a format, splits into 2.5s chunks for ASR processing.
+ * Records in .m4a format, splits into 1.5s chunks for ASR processing.
  */
 
 import { useRef, useCallback } from 'react';
@@ -9,7 +9,7 @@ import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat,
 import { CHUNK_DURATION_MS } from '../constants/audio';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
-import { translateText } from '../services/translationService';
+import { translateText, translateTextStream } from '../services/translationService';
 import { SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
 
 // Recording options for expo-audio
@@ -51,6 +51,8 @@ export function useAudioRecording() {
     appendTranscript,
     addTranscriptLine,
     addTranslation,
+    updateTranslation,
+    addStreamingTranslation,
     setTranslating,
     clearCurrentTranscript,
   } = useTranscriptStore();
@@ -64,21 +66,34 @@ export function useAudioRecording() {
     addTranscriptLine(sentence.trim());
     setTranslating(true);
 
+    const id = Date.now().toString();
+    // Add initial translation entry (empty, streaming will update)
+    addTranslation({
+      id,
+      englishText: sentence.trim(),
+      chineseTranslation: '',
+      words: [],
+      timestamp: Date.now(),
+    });
+
     try {
+      // Stream translation text for fast feedback
+      await translateTextStream(sentence.trim(), (partial) => {
+        addStreamingTranslation(id, partial);
+      });
+
+      // Fetch full translation + words for final result
       const result = await translateText(sentence.trim());
-      addTranslation({
-        id: Date.now().toString(),
-        englishText: sentence.trim(),
+      updateTranslation(id, {
         chineseTranslation: result.translation,
         words: result.words,
-        timestamp: Date.now(),
       });
     } catch (err) {
       console.error('Translation failed:', err);
     } finally {
       setTranslating(false);
     }
-  }, [addTranscriptLine, addTranslation, setTranslating]);
+  }, [addTranscriptLine, addTranslation, updateTranslation, addStreamingTranslation, setTranslating]);
 
   /**
    * Process an audio chunk - transcribe and detect sentences

@@ -1,5 +1,8 @@
 /**
- * Main screen - split view with English transcript (top) and Chinese translation (bottom)
+ * Main screen - Three-zone layout
+ * Region A: English transcript
+ * Region B: Chinese translation
+ * Region C: Vocabulary (collapsible)
  */
 
 import React from 'react';
@@ -11,6 +14,7 @@ import { EnglishTranscript } from '../components/EnglishTranscript';
 import { ChineseTranslation } from '../components/ChineseTranslation';
 import { ControlButtons } from '../components/ControlButtons';
 import { VocabularyCard } from '../components/VocabularyCard';
+import { VocabularySection } from '../components/VocabularySection';
 
 export default function MainScreen() {
   return (
@@ -19,18 +23,21 @@ export default function MainScreen() {
         {/* Status */}
         <StatusIndicator />
 
-        {/* Upper half: English transcript */}
-        <View style={styles.topHalf}>
+        {/* Region A: English transcript */}
+        <View style={styles.englishZone}>
           <EnglishTranscript />
         </View>
 
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Lower half: Chinese translation */}
-        <View style={styles.bottomHalf}>
+        {/* Region B: Chinese translation */}
+        <View style={styles.chineseZone}>
           <ChineseTranslation />
         </View>
+
+        {/* Region C: Vocabulary (collapsible) */}
+        <VocabularySection />
 
         {/* Control buttons */}
         <ControlButtons />
@@ -50,8 +57,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  topHalf: {
-    flex: 1,
+  englishZone: {
+    flex: 3,
     paddingHorizontal: 16,
   },
   divider: {
@@ -59,8 +66,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
     marginHorizontal: 16,
   },
-  bottomHalf: {
-    flex: 1,
+  chineseZone: {
+    flex: 3,
     paddingHorizontal: 16,
     paddingTop: 8,
   },

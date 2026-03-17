@@ -1,6 +1,6 @@
 /**
  * ChineseTranslation - Lower half screen showing Chinese translations
- * with tappable vocabulary words
+ * Pure translation text, words moved to VocabularySection
  */
 
 import React, { useRef, useEffect } from 'react';
@@ -8,25 +8,19 @@ import {
   View,
   Text,
   ScrollView,
-  TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { useTranscriptStore, VocabularyWord } from '../store/transcriptStore';
+import { useTranscriptStore } from '../store/transcriptStore';
 
 export function ChineseTranslation() {
   const scrollRef = useRef<ScrollView>(null);
-  const { translations, isTranslating, setSelectedWord } =
-    useTranscriptStore();
+  const { translations, isTranslating } = useTranscriptStore();
 
   // Auto-scroll to bottom
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
   }, [translations, isTranslating]);
-
-  const handleWordPress = (word: VocabularyWord) => {
-    setSelectedWord(word);
-  };
 
   return (
     <View style={styles.container}>
@@ -49,20 +43,6 @@ export function ChineseTranslation() {
                 <Text style={styles.translationText}>
                   {entry.chineseTranslation}
                 </Text>
-                {entry.words.length > 0 && (
-                  <View style={styles.wordsRow}>
-                    <Text style={styles.wordLabel}>📖 生词：</Text>
-                    {entry.words.map((w, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        onPress={() => handleWordPress(w)}
-                        style={styles.wordChip}
-                      >
-                        <Text style={styles.wordChipText}>{w.word}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
               </View>
             ))}
           </>
@@ -114,30 +94,6 @@ const styles = StyleSheet.create({
     color: '#ffd93d',
     fontSize: 18,
     lineHeight: 28,
-  },
-  wordsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  wordLabel: {
-    color: '#888',
-    fontSize: 12,
-    marginRight: 6,
-  },
-  wordChip: {
-    backgroundColor: '#1e3a5f',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginRight: 6,
-    marginBottom: 4,
-  },
-  wordChipText: {
-    color: '#4fc3f7',
-    fontSize: 13,
-    fontWeight: '600',
   },
   loadingContainer: {
     flexDirection: 'row',

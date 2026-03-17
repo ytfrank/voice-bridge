@@ -37,8 +37,15 @@ interface TranscriptState {
   // Translations
   translations: TranslationEntry[];
   addTranslation: (entry: TranslationEntry) => void;
+  updateTranslation: (id: string, data: Partial<TranslationEntry>) => void;
+  addStreamingTranslation: (id: string, partial: string) => void;
   isTranslating: boolean;
   setTranslating: (v: boolean) => void;
+
+  // Accumulated vocabulary words (from all translations)
+  allWords: VocabularyWord[];
+  isVocabExpanded: boolean;
+  setVocabExpanded: (v: boolean) => void;
 
   // Selected word (for card popup)
   selectedWord: VocabularyWord | null;
@@ -63,9 +70,31 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
   translations: [],
   addTranslation: (entry) =>
-    set((s) => ({ translations: [...s.translations, entry] })),
+    set((s) => ({
+      translations: [...s.translations, entry],
+      allWords: [...s.allWords, ...entry.words],
+    })),
+  updateTranslation: (id, data) =>
+    set((s) => {
+      const updated = s.translations.map((t) => (t.id === id ? { ...t, ...data } : t));
+      const newWords = data.words ? data.words : [];
+      return {
+        translations: updated,
+        allWords: newWords.length ? [...s.allWords, ...newWords] : s.allWords,
+      };
+    }),
+  addStreamingTranslation: (id, partial) =>
+    set((s) => ({
+      translations: s.translations.map((t) =>
+        t.id === id ? { ...t, chineseTranslation: partial } : t
+      ),
+    })),
   isTranslating: false,
   setTranslating: (v) => set({ isTranslating: v }),
+
+  allWords: [],
+  isVocabExpanded: false,
+  setVocabExpanded: (v) => set({ isVocabExpanded: v }),
 
   selectedWord: null,
   setSelectedWord: (w) => set({ selectedWord: w }),
@@ -77,6 +106,8 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       transcriptLines: [],
       translations: [],
       isTranslating: false,
+      allWords: [],
+      isVocabExpanded: false,
       selectedWord: null,
     }),
 }));

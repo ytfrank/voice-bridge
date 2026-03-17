@@ -2,8 +2,8 @@
  * Audio recording configuration constants
  */
 
-// Chunk duration in milliseconds (2 seconds per chunk)
-export const CHUNK_DURATION_MS = 2500;
+// Chunk duration in milliseconds (1.5 seconds per chunk)
+export const CHUNK_DURATION_MS = 1500;
 
 // Recording options for expo-av (.m4a format)
 export const RECORDING_OPTIONS = {
@@ -35,4 +35,4 @@ export const RECORDING_OPTIONS = {
 
 // Sentence detection
 export const SENTENCE_END_REGEX = /[.!?]\s*$/;
-export const PAUSE_THRESHOLD_MS = 1500; // Silence > 1.5s = sentence boundary
+export const PAUSE_THRESHOLD_MS = 800; // Silence > 0.8s = sentence boundary
