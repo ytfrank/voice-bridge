@@ -1,152 +1,76 @@
-# VoiceBridge 提测文档
+# 提测报告 — voice-bridge v2.0（完整迭代）
 
-**提交时间**：2026-03-17 14:50  
-**提交人**：Peter  
-**版本**：v1.0.0-local-whisper
-
----
-
-## 一、本次修改内容
-
-### 1. 核心变更：本地 Whisper 替代智谱 ASR
-
-| 模块 | 变更前 | 变更后 |
-|------|--------|--------|
-| 语音转文字 | 智谱 glm-asr API | 本地 faster-whisper |
-| 延迟 | ~800ms | ~200ms |
-| 依赖 | 需要网络 + API余额 | 本地运行，无网络依赖 |
-| 模型 | 云端 whisper-1 | 本地 tiny 模型 (~75MB) |
-
-### 2. 新增文件
-
-| 文件 | 说明 |
-|------|------|
-| `backend/local_whisper.py` | Python脚本，调用 faster-whisper |
-| `backend/venv/` | Python虚拟环境（faster-whisper已安装） |
-
-### 3. 修改文件
-
-| 文件 | 修改内容 |
-|------|----------|
-| `backend/server.js` | `/api/transcribe` 改为调用本地 Whisper |
-| `README.md` | 更新技术栈说明和启动命令 |
+**提测时间：** 2026-03-17 17:00  
+**提测人：** Peter  
+**分支：** main  
+**最新 Commit：** `b29d788`  
 
 ---
 
-## 二、功能清单
+## 一、功能说明（全部需求已完成）
 
-| 功能 | 状态 | 备注 |
-|------|------|------|
-| 录音采集 | ✅ | expo-av, 2.5s 分块 |
-| 语音转文字 | ✅ | 本地 Whisper (tiny) |
-| 英文字幕显示 | ✅ | 上半屏流式显示 |
-| 中文翻译 | ✅ | GLM-4-flash |
-| 生词卡片 | ✅ | 点击弹出（音标+谐音+释义+例句） |
-| 保存功能 | ✅ | 本地 JSON 文件 |
-| 开始/结束按钮 | ✅ | 控制录音 |
+### 需求1：UI 三区布局【P0】
+- 英文区 / 中文区 / 生词折叠区（默认折叠）
+- 生词区点击展开，展示所有生词列表
 
----
+### 需求2：Bug 修复【P0】
+- `Session activation failed` 修复（`setAudioModeAsync` 增加 `interruptionMode`）
 
-## 三、自测结果
+### 需求3：延迟优化【P1】
+- 录音 chunk 2.5s → 1.5s
+- 句子停顿阈值 1.5s → 0.8s
+- 增加流式翻译（SSE）展示，先显示翻译文本，再回填词汇
 
-### BFF 后端
-
-```bash
-cd ~/projects/voice-bridge/backend
-source venv/bin/activate
-BFF_PORT=3001 node server.js
-```
-
-**Health Check**：
-```json
-{
-  "status": "ok",
-  "timestamp": "2026-03-16T18:14:43.374Z",
-  "whisper": "tiny",
-  "python": "venv"
-}
-```
-✅ 通过
-
-**翻译 API**：
-```bash
-curl -X POST http://localhost:3001/api/translate \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello world"}'
-```
-返回：中文翻译 + 生词数组  
-✅ 通过
-
-### 前端
-
-```bash
-cd ~/projects/voice-bridge
-npx expo start
-```
-
-- Expo Go 可扫码启动 ✅
-- 分屏布局正常 ✅
-- 按钮交互正常 ✅
+### 需求4：历史记录【P1】
+- 新增历史列表页 + 详情页
+- 主页底部增加“历史”按钮
 
 ---
 
-## 四、测试建议
+## 二、改动文件清单
 
-### P0 必测
-
-1. **录音 + ASR**
-   - 点击"开始"录音
-   - 说英文句子
-   - 验证上半屏显示英文文字（预期 500ms 内）
-
-2. **翻译**
-   - 完整句子后（句号/停顿）
-   - 验证下半屏显示中文翻译（预期 1500ms 内）
-
-3. **生词卡片**
-   - 点击高亮生词
-   - 验证弹出卡片包含：释义、音标、谐音、例句
-
-### P1 建议测试
-
-4. **保存功能**
-   - 点击"保存"按钮
-   - 验证本地文件生成
-
-5. **稳定性**
-   - 连续使用 5 分钟
-   - 验证无崩溃
-
-### 测试环境
-
-- **BFF**：`http://localhost:3001`
-- **前端**：Expo Go 扫码
-- **首次运行**：Whisper 会自动下载 tiny 模型 (~75MB)
+| 文件 | 改动说明 |
+|------|---------|
+| `app/index.tsx` | 三分区布局（英文/中文/生词） |
+| `components/ChineseTranslation.tsx` | 仅展示中文翻译，移除生词 chips |
+| `components/VocabularySection.tsx` | 新建生词折叠区 |
+| `store/transcriptStore.ts` | 增加 `allWords`、`isVocabExpanded`、流式更新方法 |
+| `hooks/useAudioRecording.ts` | 修复音频会话 & 流式翻译接入 |
+| `services/translationService.ts` | 新增 `translateTextStream` SSE 接口 |
+| `constants/audio.ts` | 延迟优化：chunk 1.5s、pause 0.8s |
+| `app/history/index.tsx` | 新建历史列表页 |
+| `app/history/[id].tsx` | 新建历史详情页 |
+| `components/ControlButtons.tsx` | 新增“历史”按钮 |
+| `services/saveService.ts` | 新增 `loadSession` 方法 |
 
 ---
 
-## 五、已知问题
+## 三、自测结论
 
-1. **首次启动慢**：Whisper 首次加载模型需要几秒钟
-2. **翻译依赖网络**：GLM-4-flash 需要调用智谱 API
-
----
-
-## 六、启动步骤
-
-```bash
-# 1. 启动 BFF
-cd ~/projects/voice-bridge/backend
-source venv/bin/activate
-BFF_PORT=3001 node server.js
-
-# 2. 启动 Expo（新终端）
-cd ~/projects/voice-bridge
-npx expo start
-
-# 3. 用 Expo Go 扫码
-```
+- ✅ TypeScript 编译零错误（项目代码）
+- ✅ UI 三区布局正常显示
+- ✅ 生词区默认折叠，展开后可点击查看详情
+- ✅ 录音启动不再报 `Session activation failed`
+- ✅ 流式翻译可快速显示文本
+- ✅ 历史列表页可进入、详情页可展示
 
 ---
 
-**请 Guardian 测试后反馈结果。**
+## 四、测试重点（冒烟 + 回归）
+
+1. **录音启动**：iPhone Expo Go 点击“开始”不报错
+2. **字幕显示**：英文区/中文区分离显示，中文逐句追加
+3. **生词折叠区**：默认折叠，展开后可点击词条弹卡片
+4. **延迟体验**：翻译显示明显快于旧版（目标 ≤3s）
+5. **历史记录**：保存后列表可见，点击进入详情
+
+---
+
+## 五、注意事项
+
+- 流式翻译基于 SSE，若网络不支持会回退到非流式
+- 词汇列表最终以非流式结果回填为准
+
+---
+
+<at user_id="ou_be1c18ae61787ea527f47f0dc7616ad1">Guard</at> <at user_id="ou_4d31c88faf9520be0328f5f8b824fdbd">小叮当</at> 请按测试重点验证，通过后进入验收。
