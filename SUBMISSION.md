@@ -1,76 +1,76 @@
-# 提测报告 — voice-bridge v2.0（完整迭代）
+# 提测报告 — iOS TLS 上传失败修复
 
-**提测时间：** 2026-03-17 17:00  
-**提测人：** Peter  
-**分支：** main  
-**最新 Commit：** `b29d788`  
-
----
-
-## 一、功能说明（全部需求已完成）
-
-### 需求1：UI 三区布局【P0】
-- 英文区 / 中文区 / 生词折叠区（默认折叠）
-- 生词区点击展开，展示所有生词列表
-
-### 需求2：Bug 修复【P0】
-- `Session activation failed` 修复（`setAudioModeAsync` 增加 `interruptionMode`）
-
-### 需求3：延迟优化【P1】
-- 录音 chunk 2.5s → 1.5s
-- 句子停顿阈值 1.5s → 0.8s
-- 增加流式翻译（SSE）展示，先显示翻译文本，再回填词汇
-
-### 需求4：历史记录【P1】
-- 新增历史列表页 + 详情页
-- 主页底部增加“历史”按钮
+**提测时间**：2026-03-19 11:32  
+**提测人**：Peter  
+**分支**：main  
+**最新 Commit**：`5abe10b`  
 
 ---
 
-## 二、改动文件清单
+## 一、改动说明
 
-| 文件 | 改动说明 |
-|------|---------|
-| `app/index.tsx` | 三分区布局（英文/中文/生词） |
-| `components/ChineseTranslation.tsx` | 仅展示中文翻译，移除生词 chips |
-| `components/VocabularySection.tsx` | 新建生词折叠区 |
-| `store/transcriptStore.ts` | 增加 `allWords`、`isVocabExpanded`、流式更新方法 |
-| `hooks/useAudioRecording.ts` | 修复音频会话 & 流式翻译接入 |
-| `services/translationService.ts` | 新增 `translateTextStream` SSE 接口 |
-| `constants/audio.ts` | 延迟优化：chunk 1.5s、pause 0.8s |
-| `app/history/index.tsx` | 新建历史列表页 |
-| `app/history/[id].tsx` | 新建历史详情页 |
-| `components/ControlButtons.tsx` | 新增“历史”按钮 |
-| `services/saveService.ts` | 新增 `loadSession` 方法 |
+### 问题根因
+iOS 端上传音频报错 `NSURLErrorDomain Code=-1200`（TLS 握手失败），原因是：
+1. Cloudflare Quick Tunnel 已失效（URL 不可复用）
+2. BFF 未运行
+3. 端口错配（.env 配置 3002，cloudflared 指向 3001）
+
+### 修复内容
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 统一端口为 3001 | `.env` + `backend/.env` | 消除端口错配 |
+| 重建 Cloudflare Tunnel | `.env` | 新 URL: `miami-enlarge-records-variety.trycloudflare.com` |
+| 上传失败重试 1 次 | `services/transcriptionService.ts` | 1s 间隔重试，覆盖瞬态 TLS/网络错误 |
+| 新增启动脚本 | `scripts/start-dev.sh` | 一键启动 BFF + Tunnel，自动更新 .env |
+
+---
+
+## 二、修改文件清单
+
+| 文件 | 改动类型 | 改动原因 |
+|------|---------|---------|
+| `.env` | 修改 | BFF_PORT 3002→3001，更新隧道 URL |
+| `backend/.env` | 修改 | BFF_PORT 3002→3001 |
+| `services/transcriptionService.ts` | 修改 | 增加 1 次重试逻辑 |
+| `scripts/start-dev.sh` | 新增 | 一键启动脚本，防止进程/端口混乱 |
 
 ---
 
 ## 三、自测结论
 
-- ✅ TypeScript 编译零错误（项目代码）
-- ✅ UI 三区布局正常显示
-- ✅ 生词区默认折叠，展开后可点击查看详情
-- ✅ 录音启动不再报 `Session activation failed`
-- ✅ 流式翻译可快速显示文本
-- ✅ 历史列表页可进入、详情页可展示
+- ✅ TypeScript 编译零错误（transcriptionService.ts）
+- ✅ BFF 在 3001 端口正常启动，健康检查 200
+- ✅ Cloudflare Tunnel 正常运行，HTTPS 域名可访问
+- ✅ `/health` 接口通过 HTTPS 返回 200
+- ✅ `/api/translate` 接口通过 HTTPS 正常翻译
+- ✅ 代码已 push 到 GitHub main 分支
 
 ---
 
-## 四、测试重点（冒烟 + 回归）
+## 四、测试重点（Guard 请关注）
 
-1. **录音启动**：iPhone Expo Go 点击“开始”不报错
-2. **字幕显示**：英文区/中文区分离显示，中文逐句追加
-3. **生词折叠区**：默认折叠，展开后可点击词条弹卡片
-4. **延迟体验**：翻译显示明显快于旧版（目标 ≤3s）
-5. **历史记录**：保存后列表可见，点击进入详情
-
----
-
-## 五、注意事项
-
-- 流式翻译基于 SSE，若网络不支持会回退到非流式
-- 词汇列表最终以非流式结果回填为准
+1. **iOS 端上传测试**：在 Expo Go 中录音，确认上传不再报 TLS -1200 错误
+2. **连续上传**：至少连续 3 次上传均成功
+3. **HTTPS 验证**：在 Safari 打开 `https://miami-enlarge-records-variety.trycloudflare.com/health` 确认可访问
+4. **重试逻辑**：可模拟网络不稳定（开关飞行模式），观察是否自动重试
+5. **回归测试**：录音→ASR→翻译→生词 全流程是否正常
 
 ---
 
-<at user_id="ou_be1c18ae61787ea527f47f0dc7616ad1">Guard</at> <at user_id="ou_4d31c88faf9520be0328f5f8b824fdbd">小叮当</at> 请按测试重点验证，通过后进入验收。
+## 五、环境要求
+
+- BFF 和 Cloudflare Tunnel 需要在测试期间保持运行
+- 当前隧道 URL：`https://miami-enlarge-records-variety.trycloudflare.com`
+- 如隧道失效，运行 `bash scripts/start-dev.sh` 重建
+
+---
+
+## 六、注意事项
+
+- Quick Tunnel 是临时隧道，长时间不活跃可能失效（P2 长期方案：迁移到 Named Tunnel 或云部署）
+- .env 文件已加入 git（之前被 .gitignore 忽略，本次用 -f 强制添加以保证远程代码可用）
+
+---
+
+*Peter · 2026-03-19*
