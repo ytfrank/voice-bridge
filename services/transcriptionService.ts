@@ -1,6 +1,6 @@
 /**
  * Transcription service - sends audio to BFF for ASR
- * Includes retry logic for transient failures (TLS, network)
+ * Includes retry logic and segment tracking.
  */
 
 import { uploadAsync, FileSystemUploadType } from 'expo-file-system/legacy';
@@ -13,9 +13,10 @@ const RETRY_DELAY_MS = 1000;
  * Send an audio file to BFF for transcription
  * Retries once on failure (covers transient TLS/network errors)
  * @param audioUri - local file URI of the .m4a audio chunk
+ * @param segmentId - optional segment ID for tracking
  * @returns transcribed text
  */
-export async function transcribeAudio(audioUri: string): Promise<string> {
+export async function transcribeAudio(audioUri: string, segmentId?: number): Promise<string> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await uploadAsync(API.TRANSCRIBE, audioUri, {
@@ -23,6 +24,7 @@ export async function transcribeAudio(audioUri: string): Promise<string> {
         httpMethod: 'POST',
         uploadType: FileSystemUploadType.MULTIPART,
         mimeType: 'audio/m4a',
+        parameters: segmentId !== undefined ? { segment_id: String(segmentId) } : undefined,
       });
 
       if (response.status === 200) {
@@ -37,7 +39,7 @@ export async function transcribeAudio(audioUri: string): Promise<string> {
 
     // Retry after delay (skip delay on last attempt)
     if (attempt < MAX_RETRIES) {
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
   }
 

@@ -1,5 +1,6 @@
 /**
  * Zustand store for transcript and translation state
+ * Includes pipeline status and segment tracking for Phase 1 stability optimization.
  */
 
 import { create } from 'zustand';
@@ -14,16 +15,25 @@ export interface VocabularyWord {
 
 export interface TranslationEntry {
   id: string;
+  segmentIds: number[];
   englishText: string;
   chineseTranslation: string;
   words: VocabularyWord[];
   timestamp: number;
+  transcribeTime?: number;
+  translateTime?: number;
 }
+
+export type PipelineStatus = 'idle' | 'listening' | 'recognizing' | 'translating' | 'error' | 'retrying';
 
 interface TranscriptState {
   // Recording state
   isRecording: boolean;
   setRecording: (v: boolean) => void;
+
+  // Pipeline status (6-state)
+  pipelineStatus: PipelineStatus;
+  setPipelineStatus: (s: PipelineStatus) => void;
 
   // Current partial transcript (being built from chunks)
   currentTranscript: string;
@@ -58,6 +68,9 @@ interface TranscriptState {
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   isRecording: false,
   setRecording: (v) => set({ isRecording: v }),
+
+  pipelineStatus: 'idle' as PipelineStatus,
+  setPipelineStatus: (s) => set({ pipelineStatus: s }),
 
   currentTranscript: '',
   appendTranscript: (text) =>
@@ -102,6 +115,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
   reset: () =>
     set({
       isRecording: false,
+      pipelineStatus: 'idle' as PipelineStatus,
       currentTranscript: '',
       transcriptLines: [],
       translations: [],
