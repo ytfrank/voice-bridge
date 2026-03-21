@@ -7,7 +7,8 @@
  * Previous 5s timeout caused P0 production blocking (all chunks timed out via tunnel).
  */
 
-const CHUNK_TIMEOUT_MS = 15000;
+// 30s timeout: 5s audio chunk upload (~2-3s) + tunnel latency (~2-3s) + ASR on base model (~1-3s)
+const CHUNK_TIMEOUT_MS = 30000;
 
 interface QueueItem {
   segmentId: number;

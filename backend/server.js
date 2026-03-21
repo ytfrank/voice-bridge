@@ -19,8 +19,8 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const app = express();
 const PORT = process.env.BFF_PORT || 3001;
 const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
-const WHISPER_MODEL = process.env.WHISPER_MODEL || 'tiny';
-const WHISPER_WORKERS = parseInt(process.env.WHISPER_WORKERS || '3', 10);
+const WHISPER_MODEL = process.env.WHISPER_MODEL || 'base';
+const WHISPER_WORKERS = parseInt(process.env.WHISPER_WORKERS || '2', 10);
 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
@@ -33,7 +33,7 @@ app.use(express.json({ limit: '10mb' }));
 // Multer for file uploads (audio chunks)
 const upload = multer({
   dest: '/tmp/voice-bridge-uploads/',
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max (5s chunks are ~400KB)
 });
 
 // Whisper worker pool
@@ -138,7 +138,15 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     }
 
     const audioPath = req.file.path;
-    console.log(`[Transcribe] Queuing: ${audioPath}`);
+
+    // Skip empty/tiny audio files that cause Whisper "cannot reshape tensor" errors
+    if (req.file.size < 1024) {
+      console.warn(`[Transcribe] Skipping tiny audio: ${req.file.size} bytes`);
+      fs.unlink(audioPath, () => {});
+      return res.json({ text: '', skipped: true, reason: 'audio_too_short' });
+    }
+
+    console.log(`[Transcribe] Queuing: ${audioPath} (${req.file.size} bytes)`);
 
     const result = await whisperPool.process(audioPath);
 
