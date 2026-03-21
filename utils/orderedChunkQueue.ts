@@ -2,9 +2,12 @@
  * Ordered Chunk Queue
  * Processes audio chunks strictly in segmentId order.
  * Prevents out-of-order transcription results.
+ *
+ * Timeout set to 15s to accommodate: upload (~1-2s) + tunnel latency (~2-3s) + ASR (~0.5-2s)
+ * Previous 5s timeout caused P0 production blocking (all chunks timed out via tunnel).
  */
 
-const CHUNK_TIMEOUT_MS = 5000;
+const CHUNK_TIMEOUT_MS = 15000;
 
 interface QueueItem {
   segmentId: number;
@@ -41,16 +44,18 @@ export class OrderedChunkQueue {
 
       this.queue.shift();
 
+      const t0 = Date.now();
       try {
         // Process with timeout
         await Promise.race([
           this.onProcess(item.segmentId, item.uri),
           new Promise<void>((_, reject) =>
-            setTimeout(() => reject(new Error(`Chunk ${item.segmentId} timeout`)), CHUNK_TIMEOUT_MS)
+            setTimeout(() => reject(new Error(`Chunk ${item.segmentId} timeout (${CHUNK_TIMEOUT_MS}ms)`)), CHUNK_TIMEOUT_MS)
           ),
         ]);
+        console.log(`[Queue] segment ${item.segmentId} done in ${Date.now() - t0}ms`);
       } catch (err) {
-        console.error(`[Queue] segment ${item.segmentId} failed:`, err);
+        console.error(`[Queue] segment ${item.segmentId} failed after ${Date.now() - t0}ms:`, err);
         // Skip failed chunk, continue with next
       }
 
