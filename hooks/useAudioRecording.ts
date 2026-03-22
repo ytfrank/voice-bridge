@@ -9,7 +9,7 @@ import { CHUNK_DURATION_MS, SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS, MIN_AUDIO_SI
 import * as FileSystem from 'expo-file-system';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
-import { translateText } from '../services/translationService';
+import { translateText, translateTextStream } from '../services/translationService';
 import { RecordingStateMachine, RecordingState } from '../utils/recordingStateMachine';
 import { OrderedChunkQueue } from '../utils/orderedChunkQueue';
 import { pipelineLogger } from '../utils/pipelineLogger';
@@ -125,24 +125,42 @@ export function useAudioRecording() {
       });
 
       try {
-        const result = await translateText(sentence.trim());
+        // Use streaming translation for faster perceived response
+        const streamTranslation = await translateTextStream(
+          sentence.trim(),
+          (partial: string) => {
+            // Update translation incrementally as tokens arrive
+            updateTranslation(id, { chineseTranslation: partial });
+          }
+        );
+
         const translateTime = Date.now() - t0;
 
+        // Final update with complete translation
         updateTranslation(id, {
-          chineseTranslation: result.translation,
-          words: result.words,
+          chineseTranslation: streamTranslation || '翻译失败',
           translateTime,
         });
 
         if (segmentIds.length > 0) {
           pipelineLogger.log(segmentIds[0], 'translate_done', {
             translateTime,
-            translation: result.translation.substring(0, 50),
+            translation: (streamTranslation || '').substring(0, 50),
           });
         }
       } catch (err) {
         console.error('Translation failed:', err);
-        updateTranslation(id, { chineseTranslation: '翻译失败' });
+        // Fallback to non-streaming
+        try {
+          const result = await translateText(sentence.trim());
+          updateTranslation(id, {
+            chineseTranslation: result.translation,
+            words: result.words,
+            translateTime: Date.now() - t0,
+          });
+        } catch {
+          updateTranslation(id, { chineseTranslation: '翻译失败' });
+        }
         if (segmentIds.length > 0) {
           pipelineLogger.log(segmentIds[0], 'error', { phase: 'translate', error: String(err) });
         }

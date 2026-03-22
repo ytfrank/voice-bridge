@@ -182,34 +182,17 @@ app.post('/api/translate', async (req, res) => {
       return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
     }
 
-    const systemPrompt = `你是一位专业的英语翻译和教学助手。请对以下英文进行：
-1. 翻译成自然流畅的中文
-2. 标记出3-5个对中文母语学习者可能较难的生词
+    const systemPrompt = `翻译英文为中文，标注2-3个难词。JSON格式：{"translation":"中文","words":[{"word":"词","meaning":"义"}]}。短句words可为空。只返回JSON。`;
 
-请严格以 JSON 格式返回：
-{
-  "translation": "中文翻译",
-  "words": [
-    {
-      "word": "英文单词",
-      "phonetic": "/音标/",
-      "homophone": "中文谐音",
-      "meaning": "中文释义",
-      "example": "英文例句"
-    }
-  ]
-}
-
-注意：
-- 如果文本很短或很简单，words 数组可以为空
-- phonetic 必须使用国际音标格式
-- homophone 是中文谐音读法（帮助记忆发音）
-- 只返回 JSON，不要其他文字`;
+    // AbortController for 10s timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch(
       'https://open.bigmodel.cn/api/paas/v4/chat/completions',
       {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${ZHIPU_API_KEY}`,
           'Content-Type': 'application/json',
@@ -220,11 +203,14 @@ app.post('/api/translate', async (req, res) => {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: text },
           ],
-          temperature: 0.3,
+          temperature: 0.1,
+          max_tokens: 256,
           response_format: { type: 'json_object' },
         }),
       }
     );
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -278,10 +264,14 @@ app.post('/api/translate/stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
+    const streamController = new AbortController();
+    const streamTimeout = setTimeout(() => streamController.abort(), 15000);
+
     const response = await fetch(
       'https://open.bigmodel.cn/api/paas/v4/chat/completions',
       {
         method: 'POST',
+        signal: streamController.signal,
         headers: {
           Authorization: `Bearer ${ZHIPU_API_KEY}`,
           'Content-Type': 'application/json',
@@ -291,15 +281,18 @@ app.post('/api/translate/stream', async (req, res) => {
           messages: [
             {
               role: 'system',
-              content: '你是翻译助手。请将以下英文翻译成自然流畅的中文。只输出中文翻译，不要其他内容。',
+              content: '将英文翻译成自然流畅的中文。只输出中文，不要其他内容。',
             },
             { role: 'user', content: text },
           ],
-          temperature: 0.3,
+          temperature: 0.1,
+          max_tokens: 256,
           stream: true,
         }),
       }
     );
+
+    clearTimeout(streamTimeout);
 
     if (!response.ok) {
       res.write(`data: ${JSON.stringify({ error: 'API error' })}\n\n`);
