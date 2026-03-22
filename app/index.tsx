@@ -15,6 +15,7 @@ import { ChineseTranslation } from '../components/ChineseTranslation';
 import { ControlButtons } from '../components/ControlButtons';
 import { VocabularyCard } from '../components/VocabularyCard';
 import { VocabularySection } from '../components/VocabularySection';
+import { DebugPanel } from '../components/DebugPanel';
 
 export default function MainScreen() {
   return (
@@ -45,6 +46,9 @@ export default function MainScreen() {
 
       {/* Vocabulary card modal */}
       <VocabularyCard />
+
+      {/* Debug panel - triple-tap bottom-right dot to toggle */}
+      <DebugPanel />
     </SafeAreaView>
   );
 }

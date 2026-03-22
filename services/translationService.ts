@@ -4,6 +4,8 @@
 
 import { API } from '../constants/api';
 import { VocabularyWord } from '../store/transcriptStore';
+import { errorReporter } from './errorReporter';
+import { pipelineLogger } from '../utils/pipelineLogger';
 
 export interface TranslationResult {
   translation: string;
@@ -14,6 +16,9 @@ export interface TranslationResult {
  * Translate English text to Chinese with vocabulary notes
  */
 export async function translateText(text: string): Promise<TranslationResult> {
+  const t0 = Date.now();
+  pipelineLogger.log(-1, 'translate_start', { inputLen: text.length, text: text.substring(0, 50) });
+
   try {
     const response = await fetch(API.TRANSLATE, {
       method: 'POST',
@@ -22,11 +27,20 @@ export async function translateText(text: string): Promise<TranslationResult> {
     });
 
     if (!response.ok) {
-      console.error('Translation error:', response.status);
+      const ms = Date.now() - t0;
+      pipelineLogger.log(-1, 'translate_error', { status: response.status, ms });
+      errorReporter.report(`Translate HTTP ${response.status}`, { inputLen: text.length });
       return { translation: '翻译失败', words: [] };
     }
 
     const data = await response.json();
+    const ms = Date.now() - t0;
+    pipelineLogger.log(-1, 'translate_done', {
+      ms,
+      translation: (data.translation || '').substring(0, 40),
+      wordsCount: (data.words || []).length,
+    });
+
     return {
       translation: data.translation || '翻译失败',
       words: (data.words || []).map((w: any) => ({
@@ -38,7 +52,10 @@ export async function translateText(text: string): Promise<TranslationResult> {
       })),
     };
   } catch (err) {
-    console.error('Translation failed:', err);
+    const ms = Date.now() - t0;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    pipelineLogger.log(-1, 'translate_error', { error: errMsg.substring(0, 80), ms });
+    errorReporter.report(err instanceof Error ? err : new Error(errMsg), { phase: 'translate' });
     return { translation: '网络错误，翻译失败', words: [] };
   }
 }
