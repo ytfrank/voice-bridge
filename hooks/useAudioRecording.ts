@@ -5,8 +5,7 @@
 
 import { useRef, useCallback } from 'react';
 import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
-import { CHUNK_DURATION_MS, SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS, MIN_AUDIO_SIZE } from '../constants/audio';
-import * as FileSystem from 'expo-file-system';
+import { CHUNK_DURATION_MS, SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
 import { translateText, translateTextStream } from '../services/translationService';
@@ -47,23 +46,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Check if audio file is large enough to be worth processing.
- * Files below MIN_AUDIO_SIZE are empty/silent and cause Whisper 500 errors.
- */
-async function isAudioValid(uri: string): Promise<boolean> {
-  try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists || !('size' in info) || (info.size ?? 0) < MIN_AUDIO_SIZE) {
-      console.warn(`[Audio] Skipping small/empty chunk: ${('size' in info) ? info.size : 0} bytes`);
-      return false;
-    }
-    return true;
-  } catch {
-    console.warn('[Audio] Failed to check file info, skipping chunk');
-    return false;
-  }
-}
+// Note: empty audio filtering is done server-side (backend/server.js checks <1KB)
+// Frontend FileSystem.getInfoAsync is unreliable with expo-audio URIs
 
 export function useAudioRecording() {
   const recorder = useAudioRecorder(recordingOptions);
@@ -284,8 +268,8 @@ export function useAudioRecording() {
       await recorder.stop();
       const uri = recorder.uri;
 
-      // Enqueue chunk for ordered processing (skip empty/tiny audio)
-      if (uri && await isAudioValid(uri)) {
+      // Enqueue chunk for ordered processing
+      if (uri) {
         const segId = nextSegmentId();
         pipelineLogger.log(segId, 'chunk_recorded', { uri });
         chunkQueueRef.current?.enqueue(segId, uri);
@@ -390,8 +374,8 @@ export function useAudioRecording() {
         await recorder.stop();
         const uri = recorder.uri;
 
-        // Process final chunk (skip empty/tiny audio)
-        if (uri && await isAudioValid(uri)) {
+        // Process final chunk
+        if (uri) {
           const segId = nextSegmentId();
           pipelineLogger.log(segId, 'chunk_recorded', { uri, final: true });
           chunkQueueRef.current?.enqueue(segId, uri);
