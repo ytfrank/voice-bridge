@@ -30,6 +30,9 @@ const WHISPER_SCRIPT = path.join(__dirname, 'local_whisper.py');
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Serve static test tools
+app.use('/static', express.static(path.join(__dirname, 'public')));
+
 // Multer for file uploads (audio chunks)
 const upload = multer({
   dest: '/tmp/voice-bridge-uploads/',
