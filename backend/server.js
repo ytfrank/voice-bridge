@@ -36,7 +36,7 @@ app.use('/static', express.static(path.join(__dirname, 'public')));
 // Multer for file uploads (audio chunks)
 const upload = multer({
   dest: '/tmp/voice-bridge-uploads/',
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max (5s chunks are ~400KB)
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (supports long audio/video)
 });
 
 // Whisper worker pool
@@ -149,9 +149,48 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.json({ text: '', skipped: true, reason: 'audio_too_short' });
     }
 
-    console.log(`[Transcribe] Queuing: ${audioPath} (${req.file.size} bytes)`);
+    // Normalize audio: convert to mono 16kHz WAV (Whisper's native format)
+    // This handles: video files (.mov/.mp4), stereo audio, non-standard sample rates,
+    // and ensures consistent input regardless of client format
+    const normalizedPath = audioPath + '_normalized.wav';
+    let processPath = audioPath;
+    try {
+      await new Promise((resolve, reject) => {
+        const ffmpeg = spawn('ffmpeg', [
+          '-y', '-i', audioPath,
+          '-vn',           // strip video
+          '-ac', '1',      // mono
+          '-ar', '16000',  // 16kHz (Whisper native)
+          '-acodec', 'pcm_s16le',  // 16-bit PCM
+          '-loglevel', 'error',
+          normalizedPath,
+        ]);
+        let stderr = '';
+        ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+        ffmpeg.on('close', (code) => {
+          if (code === 0 && fs.existsSync(normalizedPath)) {
+            resolve();
+          } else {
+            reject(new Error(`ffmpeg normalization failed (code ${code}): ${stderr.substring(0, 200)}`));
+          }
+        });
+        ffmpeg.on('error', reject);
+        // Timeout: 15s for normalization
+        setTimeout(() => { try { ffmpeg.kill(); } catch {} reject(new Error('ffmpeg timeout')); }, 15000);
+      });
+      processPath = normalizedPath;
+      const normSize = fs.statSync(normalizedPath).size;
+      console.log(`[Transcribe] Normalized: ${req.file.size} → ${normSize} bytes (mono 16kHz WAV)`);
+    } catch (normErr) {
+      console.warn(`[Transcribe] Normalization failed, using original: ${normErr.message}`);
+      // Fall back to original file - Whisper might still handle it
+    }
 
-    const result = await whisperPool.process(audioPath);
+    console.log(`[Transcribe] Queuing: ${processPath} (${fs.statSync(processPath).size} bytes)`);
+
+    const result = await whisperPool.process(processPath);
+    // Clean up normalized file
+    if (processPath !== audioPath) fs.unlink(normalizedPath, () => {});
 
     // Clean up temp file
     fs.unlink(audioPath, () => {});
