@@ -6,6 +6,7 @@
 import { useRef, useCallback } from 'react';
 import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
 import { CHUNK_DURATION_MS, SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
+import { API } from '../constants/api';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { transcribeAudio } from '../services/transcriptionService';
 import { translateText, translateTextStream } from '../services/translationService';
@@ -167,22 +168,30 @@ export function useAudioRecording() {
   const processChunk = useCallback(
     async (segmentId: number, uri: string) => {
       setPipelineStatus('recognizing');
-      pipelineLogger.log(segmentId, 'asr_start');
+      pipelineLogger.log(segmentId, 'asr_start', { uri: uri.substring(uri.length - 25) });
 
       const t0 = Date.now();
-      const text = await transcribeAudio(uri, segmentId);
+      let text = '';
+      try {
+        text = await transcribeAudio(uri, segmentId);
+      } catch (asrErr) {
+        pipelineLogger.log(segmentId, 'asr_error', { error: String(asrErr).substring(0, 80) });
+        const sm = stateMachineRef.current;
+        if (sm.isRecording()) setPipelineStatus('listening');
+        return;
+      }
       const transcribeTime = Date.now() - t0;
 
-      pipelineLogger.log(segmentId, 'asr_done', { transcribeTime, text: text.substring(0, 80) });
-
       if (!text.trim()) {
-        // No speech detected, back to listening
+        pipelineLogger.log(segmentId, 'asr_empty', { transcribeTime });
         const sm = stateMachineRef.current;
         if (sm.isRecording()) {
           setPipelineStatus('listening');
         }
         return;
       }
+
+      pipelineLogger.log(segmentId, 'asr_done', { ms: transcribeTime, text: text.substring(0, 60) });
 
       lastTextTimeRef.current = Date.now();
       appendTranscript(text);
@@ -271,8 +280,11 @@ export function useAudioRecording() {
       // Enqueue chunk for ordered processing
       if (uri) {
         const segId = nextSegmentId();
-        pipelineLogger.log(segId, 'chunk_recorded', { uri });
+        pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30) });
+        pipelineLogger.log(segId, 'queue_enqueue');
         chunkQueueRef.current?.enqueue(segId, uri);
+      } else {
+        pipelineLogger.log(-1, 'chunk_skipped', { reason: 'no_uri' });
       }
 
       // STOPPING → PREPARING → RECORDING
@@ -314,6 +326,12 @@ export function useAudioRecording() {
       segmentIdsBufferRef.current = [];
       lastTextTimeRef.current = Date.now();
       pipelineLogger.reset();
+
+      // Log environment info for debugging
+      pipelineLogger.log(-1, 'env_info', {
+        chunkMs: CHUNK_DURATION_MS,
+        bffUrl: API?.TRANSCRIBE || 'not_set',
+      });
 
       // Initialize ordered queue
       chunkQueueRef.current = new OrderedChunkQueue(processChunk);
