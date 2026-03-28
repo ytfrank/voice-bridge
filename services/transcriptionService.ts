@@ -49,6 +49,13 @@ export async function transcribeAudio(audioUri: string, segmentId?: number): Pro
         return text;
       }
 
+      if (response.status === 530) {
+        // Cloudflare tunnel error - wait and retry
+        pipelineLogger.log(segmentId ?? -1, 'asr_530_retry', { attempt: attempt + 1 });
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        continue;
+      }
+
       const errMsg = `ASR HTTP ${response.status} (attempt ${attempt + 1})`;
       pipelineLogger.log(segmentId ?? -1, 'asr_error', {
         status: response.status,

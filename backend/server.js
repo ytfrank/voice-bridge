@@ -334,7 +334,7 @@ app.post('/api/translate', async (req, res) => {
       text: text.substring(0, 80),
     });
 
-    const systemPrompt = `翻译英文为中文，标注2-3个难词。JSON格式：{"translation":"中文","words":[{"word":"词","meaning":"义"}]}。短句words可为空。只返回JSON。`;
+    const systemPrompt = '将以下英文翻译为中文。只返回中文翻译文本，不要JSON，不要其他内容。';
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -357,7 +357,6 @@ app.post('/api/translate', async (req, res) => {
           ],
           temperature: 0.1,
           max_tokens: 256,
-          response_format: { type: 'json_object' },
         }),
       }
     );
@@ -379,30 +378,17 @@ app.post('/api/translate', async (req, res) => {
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '{}';
-
-    let parsed;
-    try {
-      const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      parsed = JSON.parse(jsonStr);
-    } catch {
-      log('warn', 'Translate', 'JSON parse failed, using raw content', { content: content.substring(0, 100) });
-      parsed = { translation: content, words: [] };
-    }
+    const content = data.choices?.[0]?.message?.content || '';
 
     const totalMs = Date.now() - t0;
     log('info', 'Translate', `Complete (${totalMs}ms)`, {
       reqId: req.reqId,
-      translation: (parsed.translation || '').substring(0, 60),
-      wordsCount: (parsed.words || []).length,
+      translation: content.substring(0, 60),
       apiMs,
       totalMs,
     });
 
-    res.json({
-      translation: parsed.translation || content,
-      words: parsed.words || [],
-    });
+    res.json({ translation: content.trim(), words: [] });
   } catch (err) {
     const isTimeout = err.name === 'AbortError';
     log('error', 'Translate', isTimeout ? 'Timeout (10s)' : 'Unhandled error', {
@@ -552,8 +538,31 @@ app.get('/api/logs', (req, res) => {
   }
 });
 
+// ===== Express global error middleware =====
+app.use((err, req, res, next) => {
+  log('error', 'EXPRESS', 'Unhandled route error', { error: err.message, path: req.path, reqId: req.reqId });
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// ===== Debug crash endpoint (dev only) =====
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/debug/crash', (req, res) => {
+    log('warn', 'DEBUG', 'Crash endpoint triggered');
+    res.json({ msg: 'crashing...' });
+    setTimeout(() => process.exit(1), 100);
+  });
+}
+
+// ===== Global exception handlers =====
+process.on('uncaughtException', (err) => {
+  log('error', 'FATAL', 'Uncaught exception', { error: err.message, stack: err.stack });
+});
+process.on('unhandledRejection', (reason) => {
+  log('error', 'FATAL', 'Unhandled rejection', { reason: String(reason) });
+});
+
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   log('info', 'Server', `VoiceBridge BFF started on :${PORT}`, {
     whisper: WHISPER_MODEL,
     workers: WHISPER_WORKERS,
@@ -564,3 +573,46 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 VoiceBridge BFF running on http://0.0.0.0:${PORT}`);
   console.log(`📋 Logs: tail -f ${LOG_FILE}`);
 });
+
+// ===== WebSocket heartbeat =====
+const { WebSocketServer } = require('ws');
+const wss = new WebSocketServer({ server });
+const HEARTBEAT_INTERVAL = 30000;
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', (msg) => {
+    if (msg.toString() === 'ping') ws.send('pong');
+  });
+});
+
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_INTERVAL);
+
+// ===== /tmp cleanup (hourly) =====
+setInterval(() => {
+  const tmpDir = '/tmp';
+  const oneHourAgo = Date.now() - 3600000;
+  try {
+    fs.readdirSync(tmpDir).forEach((file) => {
+      if (!file.startsWith('voice-bridge')) return;
+      if (!file.endsWith('.m4a') && !file.endsWith('.wav')) return;
+      const filePath = path.join(tmpDir, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.mtimeMs < oneHourAgo) {
+          fs.unlink(filePath, () => {});
+          log('debug', 'Cleanup', `Removed stale tmp file: ${file}`);
+        }
+      } catch {}
+    });
+  } catch (e) {
+    log('warn', 'Cleanup', 'tmp cleanup error', { error: e.message });
+  }
+}, 3600000);

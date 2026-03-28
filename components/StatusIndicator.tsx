@@ -16,9 +16,12 @@ const STATUS_MAP: Record<PipelineStatus, { text: string; color: string }> = {
 };
 
 export function StatusIndicator() {
-  const { pipelineStatus } = useTranscriptStore();
+  const { pipelineStatus, isRecording } = useTranscriptStore();
 
-  const { text, color } = STATUS_MAP[pipelineStatus] || STATUS_MAP.idle;
+  const isInterrupted = pipelineStatus === 'idle' && isRecording;
+  const { text, color } = isInterrupted
+    ? { text: '录音已暂停 - 来电中断', color: '#ff9800' }
+    : STATUS_MAP[pipelineStatus] || STATUS_MAP.idle;
 
   return (
     <View style={styles.container}>

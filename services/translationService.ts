@@ -9,7 +9,7 @@ import { pipelineLogger } from '../utils/pipelineLogger';
 
 export interface TranslationResult {
   translation: string;
-  words: VocabularyWord[];
+  words?: VocabularyWord[];
 }
 
 /**
@@ -49,7 +49,7 @@ export async function translateText(text: string): Promise<TranslationResult> {
         homophone: w.homophone || '',
         meaning: w.meaning || '',
         example: w.example || '',
-      })),
+      })) || [],
     };
   } catch (err) {
     const ms = Date.now() - t0;

@@ -4,6 +4,7 @@
  */
 
 import { useRef, useCallback } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
 import { CHUNK_DURATION_MS, SENTENCE_END_REGEX, PAUSE_THRESHOLD_MS } from '../constants/audio';
 import { API } from '../constants/api';
@@ -13,6 +14,9 @@ import { translateText, translateTextStream } from '../services/translationServi
 import { RecordingStateMachine, RecordingState } from '../utils/recordingStateMachine';
 import { OrderedChunkQueue } from '../utils/orderedChunkQueue';
 import { pipelineLogger } from '../utils/pipelineLogger';
+import { wsService } from '../services/websocketService';
+
+const WATCHDOG_INTERVAL_MS = 30000;
 
 const RECOVERY_DELAY_MS = 500;
 
@@ -53,9 +57,12 @@ function sleep(ms: number): Promise<void> {
 export function useAudioRecording() {
   const recorder = useAudioRecorder(recordingOptions);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const appStateSubscriptionRef = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
   const sentenceBufferRef = useRef<string>('');
   const segmentIdsBufferRef = useRef<number[]>([]);
   const lastTextTimeRef = useRef<number>(0);
+  const lastChunkTimeRef = useRef<number>(Date.now());
   const segmentCounterRef = useRef<number>(0);
 
   const stateMachineRef = useRef<RecordingStateMachine>(
@@ -279,6 +286,7 @@ export function useAudioRecording() {
 
       // Enqueue chunk for ordered processing
       if (uri) {
+        lastChunkTimeRef.current = Date.now();
         const segId = nextSegmentId();
         pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30) });
         pipelineLogger.log(segId, 'queue_enqueue');
@@ -360,8 +368,58 @@ export function useAudioRecording() {
       setRecording(true);
       setPipelineStatus('listening');
 
+      // Connect WebSocket heartbeat
+      wsService.connect(API.WS);
+
       // Start chunk cycle timer
       timerRef.current = setInterval(cycleRecording, CHUNK_DURATION_MS);
+
+      // Start watchdog: if no new chunk for 30s while recording, attempt recovery
+      lastChunkTimeRef.current = Date.now();
+      watchdogRef.current = setInterval(async () => {
+        const sm = stateMachineRef.current;
+        if (!sm.isRecording()) return;
+        const elapsed = Date.now() - lastChunkTimeRef.current;
+        if (elapsed > WATCHDOG_INTERVAL_MS) {
+          pipelineLogger.log(-1, 'watchdog_trigger', { elapsedMs: elapsed });
+          sm.transition(RecordingState.ERROR);
+          const recovered = await attemptRecovery(sm);
+          if (recovered) {
+            lastChunkTimeRef.current = Date.now();
+          } else {
+            setPipelineStatus('error');
+            if (timerRef.current) {
+              clearInterval(timerRef.current);
+              timerRef.current = null;
+            }
+            if (watchdogRef.current) {
+              clearInterval(watchdogRef.current);
+              watchdogRef.current = null;
+            }
+            setRecording(false);
+            sm.transition(RecordingState.IDLE);
+          }
+        }
+      }, WATCHDOG_INTERVAL_MS);
+
+      // Handle app background / call interruption
+      appStateSubscriptionRef.current = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+        if (nextState === 'background' || nextState === 'inactive') {
+          setPipelineStatus('idle');
+          pipelineLogger.log(-1, 'app_background', {});
+        } else if (nextState === 'active') {
+          setTimeout(async () => {
+            const sm = stateMachineRef.current;
+            if (!sm.isRecording() && sm.getState() === RecordingState.ERROR) {
+              const recovered = await attemptRecovery(sm);
+              if (recovered) {
+                setPipelineStatus('listening');
+                pipelineLogger.log(-1, 'audio_resumed_from_background', {});
+              }
+            }
+          }, 5000);
+        }
+      });
 
       console.log('[Start] Recording started successfully');
     } catch (err) {
@@ -380,11 +438,20 @@ export function useAudioRecording() {
     const sm = stateMachineRef.current;
 
     try {
-      // Clear timer
+      // Clear timers and subscriptions
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      if (watchdogRef.current) {
+        clearInterval(watchdogRef.current);
+        watchdogRef.current = null;
+      }
+      if (appStateSubscriptionRef.current) {
+        appStateSubscriptionRef.current.remove();
+        appStateSubscriptionRef.current = null;
+      }
+      wsService.disconnect();
 
       // Stop recording if active
       if (sm.isRecording() || sm.getState() === RecordingState.PREPARING) {
@@ -417,6 +484,15 @@ export function useAudioRecording() {
       console.log('[Stop] Recording stopped');
     } catch (err) {
       console.error('[Stop] Error:', err);
+      if (watchdogRef.current) {
+        clearInterval(watchdogRef.current);
+        watchdogRef.current = null;
+      }
+      if (appStateSubscriptionRef.current) {
+        appStateSubscriptionRef.current.remove();
+        appStateSubscriptionRef.current = null;
+      }
+      wsService.disconnect();
       sm.reset();
       setRecording(false);
       setPipelineStatus('idle');
