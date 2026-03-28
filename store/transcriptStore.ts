@@ -30,6 +30,10 @@ interface TranscriptState {
   // Recording state
   isRecording: boolean;
   setRecording: (v: boolean) => void;
+  sessionStartTime: number | null;
+  setSessionStartTime: (v: number | null) => void;
+  sessionDurationMs: number | null;
+  setSessionDurationMs: (v: number | null) => void;
 
   // Pipeline status (6-state)
   pipelineStatus: PipelineStatus;
@@ -68,6 +72,10 @@ interface TranscriptState {
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   isRecording: false,
   setRecording: (v) => set({ isRecording: v }),
+  sessionStartTime: null,
+  setSessionStartTime: (v) => set({ sessionStartTime: v }),
+  sessionDurationMs: null,
+  setSessionDurationMs: (v) => set({ sessionDurationMs: v }),
 
   pipelineStatus: 'idle' as PipelineStatus,
   setPipelineStatus: (s) => set({ pipelineStatus: s }),
@@ -115,6 +123,8 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
   reset: () =>
     set({
       isRecording: false,
+      sessionStartTime: null,
+      sessionDurationMs: null,
       pipelineStatus: 'idle' as PipelineStatus,
       currentTranscript: '',
       transcriptLines: [],

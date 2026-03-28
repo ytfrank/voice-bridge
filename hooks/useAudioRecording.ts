@@ -72,6 +72,8 @@ export function useAudioRecording() {
 
   const {
     setRecording,
+    setSessionStartTime,
+    setSessionDurationMs,
     setPipelineStatus,
     appendTranscript,
     addTranscriptLine,
@@ -366,6 +368,8 @@ export function useAudioRecording() {
 
       recorder.record();
       setRecording(true);
+      setSessionStartTime(Date.now());
+      setSessionDurationMs(null);
       setPipelineStatus('listening');
 
       // Connect WebSocket heartbeat
@@ -429,7 +433,7 @@ export function useAudioRecording() {
       setRecording(false);
       setPipelineStatus('error');
     }
-  }, [recorder, setRecording, setPipelineStatus, cycleRecording, processChunk]);
+  }, [recorder, setRecording, setSessionStartTime, setSessionDurationMs, setPipelineStatus, cycleRecording, processChunk]);
 
   /**
    * Stop recording
@@ -479,6 +483,8 @@ export function useAudioRecording() {
 
       sm.transition(RecordingState.IDLE);
       setRecording(false);
+      const startedAt = useTranscriptStore.getState().sessionStartTime;
+      setSessionDurationMs(startedAt ? Date.now() - startedAt : null);
       setPipelineStatus('idle');
 
       console.log('[Stop] Recording stopped');
@@ -497,7 +503,7 @@ export function useAudioRecording() {
       setRecording(false);
       setPipelineStatus('idle');
     }
-  }, [recorder, setRecording, setPipelineStatus, nextSegmentId, clearCurrentTranscript, processSentence]);
+  }, [recorder, setRecording, setSessionDurationMs, setPipelineStatus, nextSegmentId, clearCurrentTranscript, processSentence]);
 
   return { startRecording, stopRecording };
 }

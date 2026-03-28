@@ -3,7 +3,7 @@
 > **提测人**: Peter
 > **日期**: 2026-03-28
 > **分支**: feature/v1.5
-> **Commit**: 1d9d493
+> **Commit**: b900a26
 
 ---
 
@@ -94,6 +94,23 @@
 
 ---
 
+## 冒烟后修复（2026-03-28 16:55）
+
+### Bug 1：导出时长失真
+- **问题**：历史会话导出时长用 `Date.now() - 首条翻译时间` 计算，旧会话导出时长严重失真
+- **修复**：在会话持久化中新增 `sessionStartTime` 和 `sessionDurationMs`
+- **涉及文件**：`store/transcriptStore.ts`、`hooks/useAudioRecording.ts`、`components/ControlButtons.tsx`、`services/saveService.ts`、`app/history/[id].tsx`
+
+### Bug 2：录音时间格式不稳定
+- **问题**：`toLocaleString('zh-CN')` 受平台和系统区域设置影响，格式不稳定
+- **修复**：改为显式格式化 `YYYY-MM-DD HH:MM:SS`（基于 `toISOString().replace('T', ' ').slice(0, 19)`）
+- **涉及文件**：`services/saveService.ts`
+
+### PM2 安装与确认
+- `npm install -g pm2` ✅
+- `pm2 start ecosystem.config.js` ✅
+- `pm2 list` 显示 `voice-bridge-bff` 为 `online` ✅
+
 ## 自测情况
 
 | 检查项 | 结果 |
@@ -101,6 +118,7 @@
 | TypeScript 编译 | ✅ 无新增错误（仅预存 expo-audio 类型声明缺失） |
 | backend npm install | ✅ ws 依赖安装成功 |
 | faster-whisper medium 模型 | ✅ 下载成功，加载 OK |
+| PM2 安装并启动 | ✅ `voice-bridge-bff` online |
 | Git commit + push | ✅ feature/v1.5 已推送 |
 
 ---
@@ -123,9 +141,10 @@
 - **530 模拟**：可用 `kill -9 <BFF_PID>` 或 `/api/debug/crash`（非 production 环境）
 - **来电测试**：必须真机，模拟器不支持 AudioSession interruption
 - **首次启动**：medium 模型首次加载约 10-15s，后续 cached
+- **历史会话兼容**：旧会话没有持久化 `sessionStartTime/sessionDurationMs`，已在 `loadSession` 中加 fallback 兼容逻辑
 
 ---
 
 *提测时间: 2026-03-28*
-*Commit: 1d9d493*
+*Commit: b900a26*
 *分支: feature/v1.5*

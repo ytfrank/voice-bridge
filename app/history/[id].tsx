@@ -44,10 +44,11 @@ export default function HistoryDetailPage() {
   const handleExport = async () => {
     if (!session) return;
     try {
-      const startTime = session.translations.length > 0
-        ? session.translations[0].timestamp
-        : new Date(session.savedAt).getTime();
-      await exportSessionMarkdown(session.translations, startTime);
+      await exportSessionMarkdown(
+        session.translations,
+        session.sessionStartTime,
+        session.sessionDurationMs
+      );
     } catch (err) {
       console.error('Export failed:', err);
     }

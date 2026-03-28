@@ -16,6 +16,8 @@ import { TranslationEntry } from '../store/transcriptStore';
 
 export interface SessionData {
   savedAt: string;
+  sessionStartTime: number;
+  sessionDurationMs: number;
   transcriptLines: string[];
   translations: Array<{
     english: string;
@@ -42,7 +44,9 @@ async function ensureDir() {
  */
 export async function saveSession(
   transcriptLines: string[],
-  translations: TranslationEntry[]
+  translations: TranslationEntry[],
+  sessionStartTime: number,
+  sessionDurationMs: number
 ): Promise<string> {
   await ensureDir();
 
@@ -52,6 +56,8 @@ export async function saveSession(
 
   const data = {
     savedAt: new Date().toISOString(),
+    sessionStartTime,
+    sessionDurationMs,
     transcriptLines,
     translations: translations.map((t) => ({
       english: t.englishText,
@@ -81,7 +87,28 @@ export async function loadSession(filename: string): Promise<SessionData> {
   await ensureDir();
   const filepath = `${SAVE_DIR}${filename}`;
   const json = await readAsStringAsync(filepath);
-  return JSON.parse(json) as SessionData;
+  const parsed = JSON.parse(json) as Partial<SessionData>;
+
+  const fallbackStartTime =
+    parsed.sessionStartTime ??
+    parsed.translations?.[0]?.timestamp ??
+    new Date(parsed.savedAt ?? Date.now()).getTime();
+  const fallbackDurationMs =
+    parsed.sessionDurationMs ??
+    Math.max(
+      0,
+      (parsed.translations?.length
+        ? (parsed.translations[parsed.translations.length - 1]?.timestamp ?? fallbackStartTime) - fallbackStartTime
+        : new Date(parsed.savedAt ?? Date.now()).getTime() - fallbackStartTime)
+    );
+
+  return {
+    savedAt: parsed.savedAt ?? new Date().toISOString(),
+    sessionStartTime: fallbackStartTime,
+    sessionDurationMs: fallbackDurationMs,
+    transcriptLines: parsed.transcriptLines ?? [],
+    translations: parsed.translations ?? [],
+  };
 }
 
 /**
@@ -89,10 +116,11 @@ export async function loadSession(filename: string): Promise<SessionData> {
  */
 export async function exportSessionMarkdown(
   translations: Array<{ english: string; chinese: string; timestamp: number }>,
-  sessionStartTime: number
+  sessionStartTime: number,
+  sessionDurationMs: number
 ): Promise<void> {
   const startDate = new Date(sessionStartTime);
-  const durationMs = Date.now() - sessionStartTime;
+  const durationMs = sessionDurationMs;
 
   const formatTs = (ms: number): string => {
     const totalSec = Math.floor(ms / 1000);
@@ -108,9 +136,13 @@ export async function exportSessionMarkdown(
     return hours > 0 ? `${hours}小时 ${minutes}分钟` : `${minutes}分钟`;
   };
 
+  const formatDateTime = (date: Date): string => {
+    return date.toISOString().replace('T', ' ').slice(0, 19);
+  };
+
   const lines = [
     '# voice-bridge 录音记录',
-    `**录音时间**：${startDate.toLocaleString('zh-CN')}`,
+    `**录音时间**：${formatDateTime(startDate)}`,
     `**时长**：${formatDur(durationMs)}`,
     '',
     '---',
