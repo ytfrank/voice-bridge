@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { loadSession, SessionData } from '../../services/saveService';
+import { loadSession, SessionData, exportSessionMarkdown } from '../../services/saveService';
 
 export default function HistoryDetailPage() {
   const { id } = useLocalSearchParams();
@@ -41,6 +41,19 @@ export default function HistoryDetailPage() {
     }
   };
 
+  const handleExport = async () => {
+    if (!session) return;
+    try {
+      await exportSessionMarkdown(
+        session.translations,
+        session.sessionStartTime,
+        session.sessionDurationMs
+      );
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -49,7 +62,9 @@ export default function HistoryDetailPage() {
           <Text style={styles.backBtnText}>← 返回</Text>
         </TouchableOpacity>
         <Text style={styles.title}>会话详情</Text>
-        <View style={{ width: 60 }} />
+        <TouchableOpacity onPress={handleExport} style={styles.exportBtn}>
+          <Text style={styles.exportBtnText}>导出</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Content */}
@@ -63,47 +78,18 @@ export default function HistoryDetailPage() {
         </View>
       ) : session ? (
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* English */}
+          {/* 英中对照展示 */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>英文字幕</Text>
-            {session.transcriptLines.length === 0 ? (
-              <Text style={styles.emptyText}>暂无英文内容</Text>
-            ) : (
-              session.transcriptLines.map((line, idx) => (
-                <Text key={idx} style={styles.englishText}>
-                  {line}
-                </Text>
-              ))
-            )}
-          </View>
-
-          {/* Chinese */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>中文翻译</Text>
+            <Text style={styles.sectionTitle}>会话记录</Text>
             {session.translations.length === 0 ? (
-              <Text style={styles.emptyText}>暂无中文翻译</Text>
+              <Text style={styles.emptyText}>暂无内容</Text>
             ) : (
               session.translations.map((t, idx) => (
-                <Text key={idx} style={styles.chineseText}>
-                  {t.chinese}
-                </Text>
+                <View key={idx} style={styles.entryBlock}>
+                  <Text style={styles.englishText}>{t.english}</Text>
+                  <Text style={styles.chineseText}>{t.chinese}</Text>
+                </View>
               ))
-            )}
-          </View>
-
-          {/* Vocabulary */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>生词列表</Text>
-            {session.translations.flatMap((t) => t.words).length === 0 ? (
-              <Text style={styles.emptyText}>暂无生词</Text>
-            ) : (
-              <View style={styles.wordList}>
-                {session.translations.flatMap((t) => t.words).map((w, idx) => (
-                  <View key={`${w.word}-${idx}`} style={styles.wordChip}>
-                    <Text style={styles.wordChipText}>{w.word}</Text>
-                  </View>
-                ))}
-              </View>
             )}
           </View>
         </ScrollView>
@@ -166,32 +152,29 @@ const styles = StyleSheet.create({
     color: '#e0e0e0',
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   chineseText: {
     color: '#ffd93d',
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 6,
   },
   emptyText: {
     color: '#555',
     fontStyle: 'italic',
   },
-  wordList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  entryBlock: {
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
   },
-  wordChip: {
-    backgroundColor: '#1e3a5f',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  exportBtn: {
+    paddingVertical: 8,
+    paddingLeft: 16,
   },
-  wordChipText: {
+  exportBtnText: {
     color: '#4fc3f7',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 16,
   },
 });

@@ -1,76 +1,129 @@
-# 提测报告 — iOS TLS 上传失败修复
+# 提测报告 — 线上确认跳转失败修复
 
-**提测时间**：2026-03-19 11:32  
+**提测时间**：2026-03-31 08:41  
 **提测人**：Peter  
-**分支**：main  
-**最新 Commit**：`d470e9d`  
+**分支**：feature/v1.5  
+**最新 Commit**：`431ca89`  
 
 ---
 
-## 一、改动说明
+## 一、问题根因
 
-### 问题根因
-iOS 端上传音频报错 `NSURLErrorDomain Code=-1200`（TLS 握手失败），原因是：
-1. Cloudflare Quick Tunnel 已失效（URL 不可复用）
-2. BFF 未运行
-3. 端口错配（.env 配置 3002，cloudflared 指向 3001）
+本次线上确认失败不是单点问题，而是链路上有 3 个问题叠加：
 
-### 修复内容
+1. **BFF 根路径 `/` 未实现**
+   - 公网域名直接指向 BFF 时，访问根路径会返回 `Cannot GET /`
+   - 导致 iPhone 浏览器点开后不是跳转页，而是错误页
 
-| 改动 | 文件 | 说明 |
-|------|------|------|
-| 统一端口为 3001 | `.env` + `backend/.env` | 消除端口错配 |
-| 重建 Cloudflare Tunnel | `.env` | 新 URL: `miami-enlarge-records-variety.trycloudflare.com` |
-| 上传失败重试 1 次 | `services/transcriptionService.ts` | 1s 间隔重试，覆盖瞬态 TLS/网络错误 |
-| 新增启动脚本 | `scripts/start-dev.sh` | 一键启动 BFF + Tunnel，自动更新 .env |
+2. **Expo Go 跳转地址存在写死/过期风险**
+   - 旧跳转页里写的是历史 `exp://...` 地址
+   - Expo tunnel 变化后，旧地址会失效，导致无法稳定跳转
 
----
-
-## 二、修改文件清单
-
-| 文件 | 改动类型 | 改动原因 |
-|------|---------|---------|
-| `.env` | 修改 | BFF_PORT 3002→3001，更新隧道 URL |
-| `backend/.env` | 修改 | BFF_PORT 3002→3001 |
-| `services/transcriptionService.ts` | 修改 | 增加 1 次重试逻辑 |
-| `scripts/start-dev.sh` | 新增 | 一键启动脚本，防止进程/端口混乱 |
+3. **公网 tunnel 需要重新校正**
+   - 线上确认依赖临时 Cloudflare Quick Tunnel
+   - 旧域名可能已失效或未指向当前运行中的修复版 BFF
 
 ---
 
-## 三、自测结论
+## 二、修复内容
 
-- ✅ TypeScript 编译零错误（transcriptionService.ts）
-- ✅ BFF 在 3001 端口正常启动，健康检查 200
-- ✅ Cloudflare Tunnel 正常运行，HTTPS 域名可访问
-- ✅ `/health` 接口通过 HTTPS 返回 200
-- ✅ `/api/translate` 接口通过 HTTPS 正常翻译
-- ✅ 代码已 push 到 GitHub main 分支
+### 1. 后端补齐根路径跳转页
+- 文件：`backend/server.js`
+- 新增 `GET /`
+- 访问公网域名根路径时，返回跳转页面而不是 `Cannot GET /`
+- 页面包含：
+  - 自动跳转到 Expo Go
+  - 手动“打开 Expo Go”按钮
+  - 当前解析到的 Expo 地址和来源
+
+### 2. Expo Go 链接改为运行时动态解析
+- 文件：`backend/server.js`
+- 新增 Expo 地址解析逻辑：
+  - 优先读 `EXPO_GO_URL`
+  - 否则自动扫描本机 Expo 开发端口（8081/8082/19000/19006）
+  - 读取 Expo manifest，实时提取当前 `hostUri`
+  - 动态生成当前可用的 `exp://...` 地址
+- 这样可以避免使用过期的硬编码地址
+
+### 3. 新增调试接口
+- 文件：`backend/server.js`
+- 新增 `GET /api/meta/expo-link`
+- 用于检查当前解析出的 Expo Go 地址，便于线上排障和验收
+
+### 4. 健康检查补充链路状态
+- 文件：`backend/server.js`
+- `GET /health` 增加：
+  - `expoGoUrl`
+  - `expoSource`
+- 便于确认当前公网入口指向的版本是否正确
+
+### 5. 启动脚本增强
+- 文件：`scripts/start-dev.sh`
+- Cloudflare tunnel 启动时增加 `--no-tls-verify`
+- 启动完成后尝试自动打印当前 Expo Go URL
+- 减少“服务起来了，但外链不可确认”的排障成本
 
 ---
 
-## 四、测试重点（Guard 请关注）
+## 三、修改文件清单
 
-1. **iOS 端上传测试**：在 Expo Go 中录音，确认上传不再报 TLS -1200 错误
-2. **连续上传**：至少连续 3 次上传均成功
-3. **HTTPS 验证**：在 Safari 打开 `https://miami-enlarge-records-variety.trycloudflare.com/health` 确认可访问
-4. **重试逻辑**：可模拟网络不稳定（开关飞行模式），观察是否自动重试
-5. **回归测试**：录音→ASR→翻译→生词 全流程是否正常
+- `backend/server.js`
+- `scripts/start-dev.sh`
+- `SUBMISSION.md`
 
 ---
 
-## 五、环境要求
+## 四、自测结果
 
-- BFF 和 Cloudflare Tunnel 需要在测试期间保持运行
-- 当前隧道 URL：`https://miami-enlarge-records-variety.trycloudflare.com`
-- 如隧道失效，运行 `bash scripts/start-dev.sh` 重建
+### 本地自测
+- ✅ `http://127.0.0.1:3001/` 返回跳转页 HTML，不再报错
+- ✅ `http://127.0.0.1:3001/health` 返回 200
+- ✅ `http://127.0.0.1:3001/api/meta/expo-link?refresh=1` 返回当前 Expo 地址
+- ✅ 当前自动解析到的 Expo Go 地址：`exp://aswx_oy-ytfrank-8082.exp.direct`
+
+### 公网自测
+- ✅ 新公网域名已拉起：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
+- ✅ `GET /` 返回跳转页（HTTP 200）
+- ✅ `GET /health` 返回 200
+- ✅ `GET /api/meta/expo-link` 返回当前 Expo Go 地址
 
 ---
 
-## 六、注意事项
+## 五、Guard 测试重点
 
-- Quick Tunnel 是临时隧道，长时间不活跃可能失效（P2 长期方案：迁移到 Named Tunnel 或云部署）
-- .env 文件已加入 git（之前被 .gitignore 忽略，本次用 -f 强制添加以保证远程代码可用）
+请重点验证以下 4 点：
+
+1. **iPhone 浏览器打开公网域名根路径**
+   - 访问：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
+   - 预期：出现 VoiceBridge 跳转页，而不是 `Cannot GET /`
+
+2. **自动跳转是否生效**
+   - 预期：页面自动尝试跳转到 Expo Go
+
+3. **手动按钮兜底是否生效**
+   - 如果自动跳转失败，点击“打开 Expo Go”按钮可继续进入 Expo Go
+
+4. **链路状态接口是否正确**
+   - 访问：`https://wrapping-examined-flame-honolulu.trycloudflare.com/health`
+   - 预期：返回 200，且包含 `expoGoUrl`
 
 ---
 
-*Peter · 2026-03-19*
+## 六、当前可用地址
+
+- 公网入口：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
+- 健康检查：`https://wrapping-examined-flame-honolulu.trycloudflare.com/health`
+- Expo 地址查询：`https://wrapping-examined-flame-honolulu.trycloudflare.com/api/meta/expo-link`
+- 当前 Expo Go 地址：`exp://aswx_oy-ytfrank-8082.exp.direct`
+
+---
+
+## 七、注意事项
+
+1. 当前公网域名仍然是 **Cloudflare Quick Tunnel 临时域名**，后续 tunnel 重建后域名会变化
+2. 本次已修复“根路径报错 + 跳转地址写死”两个核心问题；后续如果要彻底稳定线上确认链路，建议升级为 **Named Tunnel / 固定公网域名**
+3. Guard 开始测试后，我这边按规则冻结当前分支，不再继续 push
+
+---
+
+*Peter · 2026-03-31*

@@ -16,8 +16,14 @@ import { useAudioRecording } from '../hooks/useAudioRecording';
 import { saveSession } from '../services/saveService';
 
 export function ControlButtons() {
-  const { isRecording, transcriptLines, translations, reset } =
-    useTranscriptStore();
+  const {
+    isRecording,
+    transcriptLines,
+    translations,
+    sessionStartTime,
+    sessionDurationMs,
+    reset,
+  } = useTranscriptStore();
   const { startRecording, stopRecording } = useAudioRecording();
   const [isSaving, setIsSaving] = useState(false);
 
@@ -37,7 +43,17 @@ export function ControlButtons() {
 
     setIsSaving(true);
     try {
-      const filepath = await saveSession(transcriptLines, translations);
+      const effectiveStartTime =
+        sessionStartTime ??
+        (translations.length > 0 ? Math.min(...translations.map((t) => t.timestamp)) : Date.now());
+      const effectiveDurationMs =
+        sessionDurationMs ?? Math.max(0, Date.now() - effectiveStartTime);
+      const filepath = await saveSession(
+        transcriptLines,
+        translations,
+        effectiveStartTime,
+        effectiveDurationMs
+      );
       Alert.alert('保存成功', `文件已保存到本地\n${filepath.split('/').pop()}`);
     } catch (err) {
       Alert.alert('保存失败', '请重试');

@@ -20,6 +20,10 @@ export type PipelineEvent =
   | 'recovery_attempt'
   | 'recovery_success'
   | 'recovery_fail'
+  | 'asr_530_retry'
+  | 'watchdog_trigger'
+  | 'app_background'
+  | 'audio_resumed_from_background'
   | 'env_info'
   | 'error';
 
