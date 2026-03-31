@@ -269,22 +269,52 @@ async function resolveExpoGoUrl(forceRefresh = false) {
   return expoUrlCache;
 }
 
-function renderExpoRedirectPage(expoUrl, source) {
+function renderExpoRedirectPage(expoUrl, source, requestInfo = {}) {
   const safeExpoUrl = escapeHtml(expoUrl || '');
   const safeSource = escapeHtml(source || 'unavailable');
-  const statusText = expoUrl ? '正在跳转到 Expo Go…' : '暂时未解析到 Expo Go 地址';
+  const safeUserAgent = String(requestInfo.userAgent || '');
+  const isFeishu = /Lark|Feishu/i.test(safeUserAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(safeUserAgent);
+  const statusText = expoUrl ? '正在尝试打开 Expo Go… [V1.5.2]' : '暂时未解析到 Expo Go 地址';
   const hintText = expoUrl
-    ? '如果没有自动跳转，请点击下方按钮'
+    ? '如果自动跳转失败，请使用下方兜底方式'
     : '请联系 Peter 检查 Expo 开发服务或重新部署';
   const action = expoUrl
     ? `<a href="${safeExpoUrl}" class="btn">打开 Expo Go</a>`
     : '<div class="btn disabled">暂不可跳转</div>';
+  const copyAction = expoUrl
+    ? `<button class="btn secondary" onclick="copyExpoUrl()">复制 Expo 地址</button>`
+    : '';
+  const envNotice = isFeishu
+    ? '<p>⚠️ 当前看起来是飞书内浏览器，可能会拦截 exp:// 跳转。</p><p>建议点右上角 → 在 Safari 中打开，再试自动跳转；若仍失败，打开 Expo Go 手动粘贴下方地址。</p>'
+    : isIOS
+      ? '<p>ℹ️ 如果 iPhone 没有自动跳转，请点击按钮，或复制下方地址到 Expo Go → Enter URL manually。</p>'
+      : '<p>ℹ️ 若当前浏览器不支持 exp://，请复制下方地址到已安装 Expo Go 的设备中打开。</p>';
   const detail = expoUrl
-    ? `<p>🔗 地址：${safeExpoUrl}</p><p>🧭 来源：${safeSource}</p>`
+    ? `<p>🔗 Expo 地址：${safeExpoUrl}</p><p>🧭 来源：${safeSource}</p><p>🌐 当前公网页：${escapeHtml(requestInfo.publicUrl || '')}</p>`
     : `<p>⚠️ 当前未找到可用 Expo Go 地址</p><p>🧭 来源：${safeSource}</p>`;
   const script = expoUrl
-    ? `setTimeout(function(){ window.location.href = ${JSON.stringify(expoUrl)}; }, 800);`
-    : 'console.warn("Expo Go URL unavailable");';
+    ? `
+      function openExpo() {
+        window.location.href = ${JSON.stringify(expoUrl)};
+      }
+      function copyExpoUrl() {
+        const value = ${JSON.stringify(expoUrl)};
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(value).then(function(){ alert('Expo 地址已复制，请到 Expo Go 粘贴打开'); });
+          return;
+        }
+        const input = document.createElement('input');
+        input.value = value;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        alert('Expo 地址已复制，请到 Expo Go 粘贴打开');
+      }
+      setTimeout(openExpo, 800);
+    `
+    : 'function copyExpoUrl() {} console.warn("Expo Go URL unavailable");';
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -307,7 +337,7 @@ function renderExpoRedirectPage(expoUrl, source) {
     }
     .container {
       width: 100%;
-      max-width: 640px;
+      max-width: 700px;
       text-align: center;
       padding: 36px 28px;
       background: rgba(255,255,255,0.12);
@@ -319,14 +349,21 @@ function renderExpoRedirectPage(expoUrl, source) {
     p { margin: 10px 0; font-size: 17px; line-height: 1.5; }
     .btn {
       display: inline-block;
-      margin-top: 26px;
+      margin: 12px 8px 0;
       padding: 14px 28px;
       background: white;
       color: #5b5bd6;
       text-decoration: none;
       border-radius: 999px;
+      border: none;
       font-weight: 700;
       font-size: 18px;
+      cursor: pointer;
+    }
+    .btn.secondary {
+      background: rgba(255,255,255,0.18);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.35);
     }
     .btn.disabled {
       background: rgba(255,255,255,0.4);
@@ -341,6 +378,21 @@ function renderExpoRedirectPage(expoUrl, source) {
       text-align: left;
       word-break: break-all;
     }
+    .steps {
+      margin-top: 20px;
+      padding: 16px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 12px;
+      text-align: left;
+    }
+    ol { margin: 8px 0 0 20px; }
+    li { margin: 8px 0; }
+    code {
+      background: rgba(0,0,0,0.18);
+      padding: 2px 6px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -349,8 +401,17 @@ function renderExpoRedirectPage(expoUrl, source) {
     <p>${statusText}</p>
     <p>${hintText}</p>
     ${action}
+    ${copyAction}
+    <div class="steps">
+      ${envNotice}
+      <ol>
+        <li>确保手机已安装 <strong>Expo Go</strong></li>
+        <li>若自动跳转失败，点击“复制 Expo 地址”</li>
+        <li>打开 Expo Go → <strong>Enter URL manually</strong></li>
+        <li>粘贴地址并连接</li>
+      </ol>
+    </div>
     <div class="note">
-      <p>📱 请确保已安装 Expo Go</p>
       ${detail}
     </div>
   </div>
@@ -362,7 +423,10 @@ function renderExpoRedirectPage(expoUrl, source) {
 app.get('/', async (req, res) => {
   const resolved = await resolveExpoGoUrl();
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderExpoRedirectPage(resolved.value, resolved.source));
+  res.send(renderExpoRedirectPage(resolved.value, resolved.source, {
+    userAgent: req.get('user-agent') || '',
+    publicUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+  }));
 });
 
 app.get('/api/meta/expo-link', async (req, res) => {
