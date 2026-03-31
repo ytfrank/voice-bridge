@@ -190,14 +190,202 @@ class WhisperWorkerPool {
 
 const whisperPool = new WhisperWorkerPool(WHISPER_WORKERS);
 
+const EXPO_PORT_CANDIDATES = (process.env.EXPO_PORTS || '8081,8082,19000,19006')
+  .split(',')
+  .map((s) => parseInt(s.trim(), 10))
+  .filter((n) => Number.isInteger(n) && n > 0);
+const EXPO_RESOLVE_CACHE_MS = 10000;
+let expoUrlCache = { value: null, source: null, checkedAt: 0 };
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeExpoGoUrl(raw) {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('exp://') || trimmed.startsWith('exps://')) return trimmed;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  return `exp://${trimmed.replace(/^\/+/, '')}`;
+}
+
+async function fetchExpoUrlFromPort(port) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1200);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/?platform=ios`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const hostUri = data?.extra?.expoClient?.hostUri || data?.expoGo?.debuggerHost;
+    const expoUrl = normalizeExpoGoUrl(hostUri);
+
+    if (!expoUrl) return null;
+
+    return {
+      url: expoUrl,
+      source: `manifest:${port}`,
+      hostUri,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveExpoGoUrl(forceRefresh = false) {
+  const envExpoUrl = normalizeExpoGoUrl(process.env.EXPO_GO_URL);
+  if (envExpoUrl) {
+    expoUrlCache = { value: envExpoUrl, source: 'env:EXPO_GO_URL', checkedAt: Date.now() };
+    return expoUrlCache;
+  }
+
+  const now = Date.now();
+  if (!forceRefresh && expoUrlCache.value && now - expoUrlCache.checkedAt < EXPO_RESOLVE_CACHE_MS) {
+    return expoUrlCache;
+  }
+
+  for (const port of EXPO_PORT_CANDIDATES) {
+    const resolved = await fetchExpoUrlFromPort(port);
+    if (resolved?.url) {
+      expoUrlCache = { value: resolved.url, source: resolved.source, checkedAt: now };
+      return expoUrlCache;
+    }
+  }
+
+  expoUrlCache = { value: null, source: null, checkedAt: now };
+  return expoUrlCache;
+}
+
+function renderExpoRedirectPage(expoUrl, source) {
+  const safeExpoUrl = escapeHtml(expoUrl || '');
+  const safeSource = escapeHtml(source || 'unavailable');
+  const statusText = expoUrl ? '正在跳转到 Expo Go…' : '暂时未解析到 Expo Go 地址';
+  const hintText = expoUrl
+    ? '如果没有自动跳转，请点击下方按钮'
+    : '请联系 Peter 检查 Expo 开发服务或重新部署';
+  const action = expoUrl
+    ? `<a href="${safeExpoUrl}" class="btn">打开 Expo Go</a>`
+    : '<div class="btn disabled">暂不可跳转</div>';
+  const detail = expoUrl
+    ? `<p>🔗 地址：${safeExpoUrl}</p><p>🧭 来源：${safeSource}</p>`
+    : `<p>⚠️ 当前未找到可用 Expo Go 地址</p><p>🧭 来源：${safeSource}</p>`;
+  const script = expoUrl
+    ? `setTimeout(function(){ window.location.href = ${JSON.stringify(expoUrl)}; }, 800);`
+    : 'console.warn("Expo Go URL unavailable");';
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VoiceBridge - 打开 Expo Go</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .container {
+      width: 100%;
+      max-width: 640px;
+      text-align: center;
+      padding: 36px 28px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+    }
+    h1 { margin: 0 0 18px; font-size: 32px; }
+    p { margin: 10px 0; font-size: 17px; line-height: 1.5; }
+    .btn {
+      display: inline-block;
+      margin-top: 26px;
+      padding: 14px 28px;
+      background: white;
+      color: #5b5bd6;
+      text-decoration: none;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 18px;
+    }
+    .btn.disabled {
+      background: rgba(255,255,255,0.4);
+      color: rgba(255,255,255,0.9);
+      cursor: not-allowed;
+    }
+    .note {
+      margin-top: 24px;
+      padding: 16px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 12px;
+      text-align: left;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎙️ VoiceBridge</h1>
+    <p>${statusText}</p>
+    <p>${hintText}</p>
+    ${action}
+    <div class="note">
+      <p>📱 请确保已安装 Expo Go</p>
+      ${detail}
+    </div>
+  </div>
+  <script>${script}</script>
+</body>
+</html>`;
+}
+
+app.get('/', async (req, res) => {
+  const resolved = await resolveExpoGoUrl();
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderExpoRedirectPage(resolved.value, resolved.source));
+});
+
+app.get('/api/meta/expo-link', async (req, res) => {
+  const resolved = await resolveExpoGoUrl(Boolean(req.query.refresh));
+  res.json({
+    ok: Boolean(resolved.value),
+    expoGoUrl: resolved.value,
+    source: resolved.source,
+    checkedAt: new Date(resolved.checkedAt).toISOString(),
+  });
+});
+
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const resolved = await resolveExpoGoUrl();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     whisper: WHISPER_MODEL,
     whisperWorkers: WHISPER_WORKERS,
-    python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system'
+    python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system',
+    expoGoUrl: resolved.value,
+    expoSource: resolved.source,
   });
 });
 
