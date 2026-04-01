@@ -35,14 +35,106 @@ const LOG_LEVEL = LOG_LEVELS[process.env.LOG_LEVEL || 'info'] || 1;
 // Open log file stream (append mode)
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized;
+  }
+  return undefined;
+}
+
+function nextServerRequestId() {
+  requestCounter += 1;
+  return `req_${Date.now()}_${requestCounter}`;
+}
+
+function extractSessionId(req, data = null) {
+  return firstNonEmpty(
+    data?.sessionId,
+    data?.payload?.sessionId,
+    req?.headers?.['x-session-id'],
+    req?.body?.sessionId,
+    Array.isArray(req?.body?.events) ? req.body.events.find((event) => event?.sessionId)?.sessionId : undefined,
+    req?.sessionId,
+  );
+}
+
+function extractRequestId(req, data = null) {
+  return firstNonEmpty(
+    data?.requestId,
+    data?.reqId,
+    data?.payload?.requestId,
+    req?.headers?.['x-request-id'],
+    req?.body?.requestId,
+    req?.reqId,
+  );
+}
+
+function attachTraceContext(req, data = null) {
+  if (!req) {
+    return {
+      requestId: firstNonEmpty(data?.requestId, data?.reqId),
+      sessionId: firstNonEmpty(data?.sessionId),
+    };
+  }
+
+  const requestId = extractRequestId(req, data) || nextServerRequestId();
+  const sessionId = extractSessionId(req, data);
+
+  req.reqId = requestId;
+  if (sessionId) req.sessionId = sessionId;
+  if (req.res?.setHeader) {
+    req.res.setHeader('X-Request-Id', requestId);
+    if (sessionId) req.res.setHeader('X-Session-Id', sessionId);
+  }
+
+  return { requestId, sessionId: sessionId || null };
+}
+
+function normalizeLogData(data = null) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {
+      requestId: firstNonEmpty(data?.requestId, data?.reqId),
+      sessionId: firstNonEmpty(data?.sessionId),
+      step: undefined,
+      duration: undefined,
+      payload: data,
+    };
+  }
+
+  const payload = { ...data };
+  const requestId = firstNonEmpty(payload.requestId, payload.reqId);
+  const sessionId = firstNonEmpty(payload.sessionId);
+  const step = firstNonEmpty(payload.step);
+  const duration = payload.duration ?? payload.ms ?? payload.totalMs ?? payload.apiMs ?? payload.whisperMs;
+
+  delete payload.requestId;
+  delete payload.reqId;
+  delete payload.sessionId;
+  delete payload.step;
+  delete payload.duration;
+
+  return { requestId, sessionId, step, duration, payload };
+}
+
 function log(level, component, message, data = null) {
   if (LOG_LEVELS[level] < LOG_LEVEL) return;
 
+  const normalized = normalizeLogData(data);
+  const now = new Date().toISOString();
   const entry = {
-    ts: new Date().toISOString(),
+    timestamp: now,
     level,
     component,
+    step: normalized.step || component,
     msg: message,
+    requestId: normalized.requestId || null,
+    sessionId: normalized.sessionId || null,
+    ...(normalized.duration !== undefined ? { duration: normalized.duration } : {}),
+    ...(normalized.payload !== undefined ? { payload: normalized.payload } : {}),
+    // Backward-compatible fields for existing tooling
+    ts: now,
     ...(data && { data }),
   };
 
@@ -50,7 +142,7 @@ function log(level, component, message, data = null) {
 
   // Console output with emoji
   const emoji = { debug: '🔍', info: 'ℹ️', warn: '⚠️', error: '❌' }[level] || '📋';
-  console.log(`${emoji} [${component}] ${message}`, data ? JSON.stringify(data).substring(0, 150) : '');
+  console.log(`${emoji} [${component}] ${message}`, normalized.payload ? JSON.stringify(normalized.payload).substring(0, 180) : '');
 
   // File output (structured JSON, one line per entry)
   logStream.write(line + '\n');
@@ -69,17 +161,28 @@ app.use(express.json({ limit: '10mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  const reqId = ++requestCounter;
-  req.reqId = reqId;
+  const trace = attachTraceContext(req);
   const t0 = Date.now();
+
+  res.setHeader('X-Request-Id', trace.requestId);
+  if (trace.sessionId) {
+    res.setHeader('X-Session-Id', trace.sessionId);
+  }
 
   res.on('finish', () => {
     const ms = Date.now() - t0;
     if (req.path !== '/health' && req.path !== '/favicon.ico') {
+      const finalTrace = attachTraceContext(req);
       log('info', 'HTTP', `${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`, {
-        reqId,
+        requestId: finalTrace.requestId,
+        sessionId: finalTrace.sessionId,
+        step: 'http_request',
+        duration: ms,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
         size: req.file?.size,
-        ms,
+        ip: req.ip,
       });
     }
   });
@@ -104,9 +207,9 @@ class WhisperWorkerPool {
     this.queue = [];
   }
 
-  async process(audioPath) {
+  async process(audioPath, trace = {}) {
     return new Promise((resolve, reject) => {
-      const task = { audioPath, resolve, reject };
+      const task = { audioPath, resolve, reject, trace };
       
       if (this.activeWorkers < this.maxWorkers) {
         this._runTask(task);
@@ -120,6 +223,9 @@ class WhisperWorkerPool {
     this.activeWorkers++;
     const t0 = Date.now();
     log('info', 'Whisper', `Worker start (${this.activeWorkers}/${this.maxWorkers})`, {
+      requestId: task.trace?.requestId,
+      sessionId: task.trace?.sessionId,
+      step: 'whisper_worker_start',
       model: WHISPER_MODEL,
       file: path.basename(task.audioPath),
       queueLen: this.queue.length,
@@ -138,25 +244,44 @@ class WhisperWorkerPool {
 
     const timeout = setTimeout(() => {
       proc.kill();
-      log('error', 'Whisper', 'Timeout (30s)', { file: path.basename(task.audioPath) });
+      log('error', 'Whisper', 'Timeout (30s)', {
+        requestId: task.trace?.requestId,
+        sessionId: task.trace?.sessionId,
+        step: 'whisper_worker_timeout',
+        file: path.basename(task.audioPath),
+      });
       this._complete(task, new Error('Whisper timeout'), null, t0);
     }, 30000);
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
       if (code !== 0) {
-        log('error', 'Whisper', `Failed (code ${code})`, { stderr: stderr.substring(0, 200) });
+        log('error', 'Whisper', `Failed (code ${code})`, {
+          requestId: task.trace?.requestId,
+          sessionId: task.trace?.sessionId,
+          step: 'whisper_worker_failed',
+          stderr: stderr.substring(0, 200),
+        });
         this._complete(task, new Error(`Whisper failed: ${stderr || stdout}`), null, t0);
       } else {
         try {
           const result = JSON.parse(stdout);
           log('info', 'Whisper', `Done (${Date.now() - t0}ms)`, {
+            requestId: task.trace?.requestId,
+            sessionId: task.trace?.sessionId,
+            step: 'whisper_worker_done',
+            duration: Date.now() - t0,
             text: (result.text || '').substring(0, 80),
             textLen: (result.text || '').length,
           });
           this._complete(task, null, result, t0);
         } catch (e) {
-          log('error', 'Whisper', 'Invalid JSON output', { stdout: stdout.substring(0, 200) });
+          log('error', 'Whisper', 'Invalid JSON output', {
+            requestId: task.trace?.requestId,
+            sessionId: task.trace?.sessionId,
+            step: 'whisper_worker_invalid_json',
+            stdout: stdout.substring(0, 200),
+          });
           this._complete(task, new Error(`Invalid JSON from Whisper: ${stdout}`), null, t0);
         }
       }
@@ -164,7 +289,13 @@ class WhisperWorkerPool {
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
-      log('error', 'Whisper', 'Process error', { error: err.message, stack: err.stack?.substring(0, 300) });
+      log('error', 'Whisper', 'Process error', {
+        requestId: task.trace?.requestId,
+        sessionId: task.trace?.sessionId,
+        step: 'whisper_worker_process_error',
+        error: err.message,
+        stack: err.stack?.substring(0, 300),
+      });
       this._complete(task, err, null, t0);
     });
   }
@@ -459,15 +590,22 @@ app.get('/health', async (req, res) => {
  */
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   const t0 = Date.now();
+  const trace = attachTraceContext(req, req.body);
   try {
     if (!req.file) {
-      log('warn', 'ASR', 'No audio file in request', { reqId: req.reqId });
+      log('warn', 'ASR', 'No audio file in request', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_missing_audio',
+      });
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
     const audioPath = req.file.path;
     log('info', 'ASR', 'Received audio', {
-      reqId: req.reqId,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'asr_receive_audio',
       size: req.file.size,
       mime: req.file.mimetype,
       originalName: req.file.originalname,
@@ -475,7 +613,12 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
     // Skip empty/tiny audio files that cause Whisper "cannot reshape tensor" errors
     if (req.file.size < 1024) {
-      log('warn', 'ASR', `Skipping tiny audio: ${req.file.size} bytes`, { reqId: req.reqId });
+      log('warn', 'ASR', `Skipping tiny audio: ${req.file.size} bytes`, {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_skip_tiny_audio',
+        size: req.file.size,
+      });
       fs.unlink(audioPath, () => {});
       return res.json({ text: '', skipped: true, reason: 'audio_too_short' });
     }
@@ -510,22 +653,33 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       processPath = normalizedPath;
       const normSize = fs.statSync(normalizedPath).size;
       log('info', 'ASR', `Normalized (${Date.now() - normT0}ms)`, {
-        reqId: req.reqId,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_audio_normalized',
+        duration: Date.now() - normT0,
         from: req.file.size,
         to: normSize,
       });
     } catch (normErr) {
       log('warn', 'ASR', `Normalization failed, using original`, {
-        reqId: req.reqId,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_normalization_failed',
         error: normErr.message,
       });
     }
 
     const processSize = fs.statSync(processPath).size;
-    log('info', 'ASR', `Queuing for Whisper`, { reqId: req.reqId, size: processSize, model: WHISPER_MODEL });
+    log('info', 'ASR', `Queuing for Whisper`, {
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'asr_queue_whisper',
+      size: processSize,
+      model: WHISPER_MODEL,
+    });
 
     const whisperT0 = Date.now();
-    const result = await whisperPool.process(processPath);
+    const result = await whisperPool.process(processPath, trace);
     const whisperMs = Date.now() - whisperT0;
 
     // Clean up files
@@ -534,29 +688,36 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
     if (!result.success) {
       log('error', 'ASR', 'Whisper returned error', {
-        reqId: req.reqId,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_whisper_error',
+        duration: whisperMs,
         error: result.error,
-        ms: whisperMs,
       });
       return res.status(500).json({ error: result.error || 'Transcription failed' });
     }
 
     const totalMs = Date.now() - t0;
     log('info', 'ASR', `Complete (${totalMs}ms)`, {
-      reqId: req.reqId,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'asr_complete',
+      duration: totalMs,
       text: (result.text || '').substring(0, 80),
       textLen: (result.text || '').length,
       whisperMs,
       totalMs,
     });
 
-    res.json({ text: result.text || '' });
+    res.json({ text: result.text || '', requestId: trace.requestId, sessionId: trace.sessionId || undefined });
   } catch (err) {
     log('error', 'ASR', 'Unhandled error', {
-      reqId: req.reqId,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'asr_unhandled_error',
+      duration: Date.now() - t0,
       error: err.message,
       stack: err.stack?.substring(0, 500),
-      ms: Date.now() - t0,
     });
     if (req.file) fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: 'Internal server error', detail: err.message });
@@ -569,6 +730,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
  */
 app.post('/api/translate', async (req, res) => {
   const t0 = Date.now();
+  const trace = attachTraceContext(req, req.body);
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {
@@ -581,7 +743,9 @@ app.post('/api/translate', async (req, res) => {
     }
 
     log('info', 'Translate', 'Start', {
-      reqId: req.reqId,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'translate_start',
       inputLen: text.length,
       text: text.substring(0, 80),
     });
@@ -619,7 +783,10 @@ app.post('/api/translate', async (req, res) => {
     if (!response.ok) {
       const errText = await response.text();
       log('error', 'Translate', `GLM API error (${apiMs}ms)`, {
-        reqId: req.reqId,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_api_error',
+        duration: apiMs,
         status: response.status,
         body: errText.substring(0, 200),
       });
@@ -634,20 +801,26 @@ app.post('/api/translate', async (req, res) => {
 
     const totalMs = Date.now() - t0;
     log('info', 'Translate', `Complete (${totalMs}ms)`, {
-      reqId: req.reqId,
-      translation: content.substring(0, 60),
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'translate_complete',
+      duration: totalMs,
+      sourceText: text.substring(0, 120),
+      translation: content.substring(0, 120),
       apiMs,
       totalMs,
     });
 
-    res.json({ translation: content.trim(), words: [] });
+    res.json({ translation: content.trim(), words: [], requestId: trace.requestId, sessionId: trace.sessionId || undefined });
   } catch (err) {
     const isTimeout = err.name === 'AbortError';
     log('error', 'Translate', isTimeout ? 'Timeout (10s)' : 'Unhandled error', {
-      reqId: req.reqId,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: isTimeout ? 'translate_timeout' : 'translate_unhandled_error',
+      duration: Date.now() - t0,
       error: err.message,
       stack: isTimeout ? undefined : err.stack?.substring(0, 500),
-      ms: Date.now() - t0,
     });
     res.status(500).json({ error: isTimeout ? 'Translation timeout' : 'Internal server error' });
   }
@@ -658,6 +831,7 @@ app.post('/api/translate', async (req, res) => {
  * Streaming translation via SSE
  */
 app.post('/api/translate/stream', async (req, res) => {
+  const trace = attachTraceContext(req, req.body);
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {
@@ -667,6 +841,14 @@ app.post('/api/translate/stream', async (req, res) => {
     if (!ZHIPU_API_KEY) {
       return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
     }
+
+    log('info', 'Translate', 'Stream start', {
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'translate_stream_start',
+      inputLen: text.length,
+      text: text.substring(0, 80),
+    });
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -703,7 +885,13 @@ app.post('/api/translate/stream', async (req, res) => {
     clearTimeout(streamTimeout);
 
     if (!response.ok) {
-      res.write(`data: ${JSON.stringify({ error: 'API error' })}\n\n`);
+      log('error', 'Translate', 'Stream API error', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_stream_api_error',
+        status: response.status,
+      });
+      res.write(`data: ${JSON.stringify({ error: 'API error', requestId: trace.requestId })}\n\n`);
       res.end();
       return;
     }
@@ -713,10 +901,21 @@ app.post('/api/translate/stream', async (req, res) => {
     });
 
     response.body.on('end', () => {
+      log('info', 'Translate', 'Stream complete', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_stream_complete',
+      });
       res.end();
     });
 
     response.body.on('error', (err) => {
+      log('error', 'Translate', 'Stream error', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_stream_error',
+        error: err.message,
+      });
       console.error('Stream error:', err);
       res.end();
     });
@@ -725,8 +924,15 @@ app.post('/api/translate/stream', async (req, res) => {
       response.body.destroy();
     });
   } catch (err) {
+    log('error', 'Translate', 'Stream unhandled error', {
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'translate_stream_unhandled_error',
+      error: err.message,
+      stack: err.stack?.substring(0, 500),
+    });
     console.error('Stream translate error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', requestId: trace.requestId });
   }
 });
 
@@ -735,9 +941,13 @@ app.post('/api/translate/stream', async (req, res) => {
  * Frontend error reporting endpoint
  */
 app.post('/api/error', (req, res) => {
+  const trace = attachTraceContext(req, req.body);
   const { error, stack, context, userAgent, timestamp } = req.body;
 
   const entry = {
+    requestId: trace.requestId,
+    sessionId: trace.sessionId,
+    step: 'client_error',
     ts: timestamp || new Date().toISOString(),
     source: 'client',
     error: error || 'unknown',
@@ -755,7 +965,60 @@ app.post('/api/error', (req, res) => {
     clientErrors.splice(0, clientErrors.length - MAX_CLIENT_ERRORS);
   }
 
-  res.json({ received: true });
+  res.json({ received: true, requestId: trace.requestId, sessionId: trace.sessionId || undefined });
+});
+
+/**
+ * POST /api/logs
+ * Receive batched frontend analytics events
+ */
+app.post('/api/logs', (req, res) => {
+  const trace = attachTraceContext(req, req.body);
+  const events = Array.isArray(req.body?.events) ? req.body.events : [];
+
+  if (events.length === 0) {
+    log('warn', 'FrontendEvent', 'Empty analytics batch', {
+      requestId: trace.requestId,
+      sessionId: trace.sessionId,
+      step: 'frontend_logs_empty_batch',
+    });
+    return res.status(400).json({ error: 'No events provided', requestId: trace.requestId });
+  }
+
+  const acceptedEvents = events.slice(0, 200);
+  for (const event of acceptedEvents) {
+    const eventName = firstNonEmpty(event?.event, 'unknown_event');
+    const eventRequestId = firstNonEmpty(event?.requestId, trace.requestId);
+    const eventSessionId = firstNonEmpty(event?.sessionId, req.body?.sessionId, trace.sessionId);
+    log('info', 'FrontendEvent', `fe_${eventName}`, {
+      requestId: eventRequestId,
+      sessionId: eventSessionId,
+      step: `fe_${eventName}`,
+      frontendTimestamp: event?.timestamp || null,
+      batchRequestId: trace.requestId,
+      payload: {
+        event: eventName,
+        payload: event?.payload || {},
+        userId: event?.userId || null,
+      },
+    });
+  }
+
+  log('info', 'FrontendEvent', 'Analytics batch accepted', {
+    requestId: trace.requestId,
+    sessionId: trace.sessionId,
+    step: 'frontend_logs_batch',
+    accepted: acceptedEvents.length,
+    dropped: Math.max(events.length - acceptedEvents.length, 0),
+  });
+
+  res.json({
+    ok: true,
+    accepted: acceptedEvents.length,
+    dropped: Math.max(events.length - acceptedEvents.length, 0),
+    requestId: trace.requestId,
+    sessionId: trace.sessionId || undefined,
+  });
 });
 
 /**

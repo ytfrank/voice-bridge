@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { useTranscriptStore } from '../store/transcriptStore';
 import { useAudioRecording } from '../hooks/useAudioRecording';
 import { saveSession } from '../services/saveService';
+import { analytics } from '../services/analyticsService';
 
 export function ControlButtons() {
   const {
@@ -54,8 +55,21 @@ export function ControlButtons() {
         effectiveStartTime,
         effectiveDurationMs
       );
+      analytics.track('export', {
+        format: 'json',
+        transcriptCount: transcriptLines.length,
+        translationCount: translations.length,
+        contentLength: JSON.stringify({ transcriptLines, translations }).length,
+        durationMs: effectiveDurationMs,
+        fileName: filepath.split('/').pop() || filepath,
+      });
       Alert.alert('保存成功', `文件已保存到本地\n${filepath.split('/').pop()}`);
     } catch (err) {
+      analytics.trackError(err, {
+        phase: 'export',
+        transcriptCount: transcriptLines.length,
+        translationCount: translations.length,
+      });
       Alert.alert('保存失败', '请重试');
       console.error('Save error:', err);
     } finally {
@@ -74,7 +88,16 @@ export function ControlButtons() {
     }
     Alert.alert('新建会话', '确定要清除当前内容吗？', [
       { text: '取消', style: 'cancel' },
-      { text: '确定', onPress: () => reset() },
+      {
+        text: '确定',
+        onPress: () => {
+          analytics.track('session_reset', {
+            transcriptCount: transcriptLines.length,
+            translationCount: translations.length,
+          });
+          reset();
+        },
+      },
     ]);
   };
 

@@ -15,6 +15,7 @@ import { RecordingStateMachine, RecordingState } from '../utils/recordingStateMa
 import { OrderedChunkQueue } from '../utils/orderedChunkQueue';
 import { pipelineLogger } from '../utils/pipelineLogger';
 import { wsService } from '../services/websocketService';
+import { analytics } from '../services/analyticsService';
 
 const WATCHDOG_INTERVAL_MS = 30000;
 
@@ -103,10 +104,22 @@ export function useAudioRecording() {
 
       const id = Date.now().toString();
       const t0 = Date.now();
+      const requestId = analytics.nextRequestId('translate');
+      const sessionId = analytics.getSessionId();
+
+      analytics.track(
+        'translation_requested',
+        {
+          segmentIds,
+          textLength: sentence.trim().length,
+          textPreview: sentence.trim().slice(0, 120),
+        },
+        requestId
+      );
 
       // Log translate start for first segment
       if (segmentIds.length > 0) {
-        pipelineLogger.log(segmentIds[0], 'translate_start', { sentence: sentence.trim() });
+        pipelineLogger.log(segmentIds[0], 'translate_start', { sentence: sentence.trim(), requestId, sessionId });
       }
 
       addTranslation({
@@ -125,7 +138,8 @@ export function useAudioRecording() {
           (partial: string) => {
             // Update translation incrementally as tokens arrive
             updateTranslation(id, { chineseTranslation: partial });
-          }
+          },
+          { requestId, sessionId, segmentIds }
         );
 
         const translateTime = Date.now() - t0;
@@ -136,27 +150,53 @@ export function useAudioRecording() {
           translateTime,
         });
 
+        analytics.track(
+          'translate_result',
+          {
+            segmentIds,
+            latencyMs: translateTime,
+            textLength: sentence.trim().length,
+            translationLength: (streamTranslation || '').length,
+            translationPreview: (streamTranslation || '').slice(0, 120),
+          },
+          requestId
+        );
+
         if (segmentIds.length > 0) {
           pipelineLogger.log(segmentIds[0], 'translate_done', {
             translateTime,
             translation: (streamTranslation || '').substring(0, 50),
+            requestId,
           });
         }
       } catch (err) {
         console.error('Translation failed:', err);
         // Fallback to non-streaming
         try {
-          const result = await translateText(sentence.trim());
+          const result = await translateText(sentence.trim(), { requestId, sessionId, segmentIds });
           updateTranslation(id, {
             chineseTranslation: result.translation,
             words: result.words,
             translateTime: Date.now() - t0,
           });
+          analytics.track(
+            'translate_result',
+            {
+              segmentIds,
+              latencyMs: Date.now() - t0,
+              textLength: sentence.trim().length,
+              translationLength: result.translation.length,
+              translationPreview: result.translation.slice(0, 120),
+              fallback: true,
+            },
+            requestId
+          );
         } catch {
           updateTranslation(id, { chineseTranslation: '翻译失败' });
         }
+        analytics.trackError(err, { phase: 'translate', segmentIds }, requestId);
         if (segmentIds.length > 0) {
-          pipelineLogger.log(segmentIds[0], 'error', { phase: 'translate', error: String(err) });
+          pipelineLogger.log(segmentIds[0], 'error', { phase: 'translate', error: String(err), requestId });
         }
       } finally {
         setTranslating(false);
@@ -180,11 +220,14 @@ export function useAudioRecording() {
       pipelineLogger.log(segmentId, 'asr_start', { uri: uri.substring(uri.length - 25) });
 
       const t0 = Date.now();
+      const requestId = analytics.nextRequestId('asr');
+      const sessionId = analytics.getSessionId();
       let text = '';
       try {
-        text = await transcribeAudio(uri, segmentId);
+        text = await transcribeAudio(uri, { segmentId, requestId, sessionId });
       } catch (asrErr) {
-        pipelineLogger.log(segmentId, 'asr_error', { error: String(asrErr).substring(0, 80) });
+        analytics.trackError(asrErr, { phase: 'asr', segmentId, uriSuffix: uri.slice(-30) }, requestId);
+        pipelineLogger.log(segmentId, 'asr_error', { error: String(asrErr).substring(0, 80), requestId });
         const sm = stateMachineRef.current;
         if (sm.isRecording()) setPipelineStatus('listening');
         return;
@@ -192,7 +235,8 @@ export function useAudioRecording() {
       const transcribeTime = Date.now() - t0;
 
       if (!text.trim()) {
-        pipelineLogger.log(segmentId, 'asr_empty', { transcribeTime });
+        analytics.track('asr_result', { segmentId, latencyMs: transcribeTime, textLength: 0, empty: true }, requestId);
+        pipelineLogger.log(segmentId, 'asr_empty', { transcribeTime, requestId });
         const sm = stateMachineRef.current;
         if (sm.isRecording()) {
           setPipelineStatus('listening');
@@ -200,7 +244,17 @@ export function useAudioRecording() {
         return;
       }
 
-      pipelineLogger.log(segmentId, 'asr_done', { ms: transcribeTime, text: text.substring(0, 60) });
+      analytics.track(
+        'asr_result',
+        {
+          segmentId,
+          latencyMs: transcribeTime,
+          textLength: text.length,
+          textPreview: text.substring(0, 120),
+        },
+        requestId
+      );
+      pipelineLogger.log(segmentId, 'asr_done', { ms: transcribeTime, text: text.substring(0, 60), requestId });
 
       lastTextTimeRef.current = Date.now();
       appendTranscript(text);
@@ -290,6 +344,11 @@ export function useAudioRecording() {
       if (uri) {
         lastChunkTimeRef.current = Date.now();
         const segId = nextSegmentId();
+        analytics.track('chunk_generated', {
+          segmentId: segId,
+          uriSuffix: uri.substring(uri.length - 30),
+          chunkDurationMs: CHUNK_DURATION_MS,
+        });
         pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30) });
         pipelineLogger.log(segId, 'queue_enqueue');
         chunkQueueRef.current?.enqueue(segId, uri);
@@ -305,6 +364,7 @@ export function useAudioRecording() {
       recorder.record();
     } catch (err) {
       console.error('[Cycle] Error:', err);
+      analytics.trackError(err, { phase: 'cycle_recording' });
       sm.transition(RecordingState.ERROR);
 
       // Attempt recovery
@@ -337,10 +397,22 @@ export function useAudioRecording() {
       lastTextTimeRef.current = Date.now();
       pipelineLogger.reset();
 
+      const sessionId = analytics.getSessionId();
+
       // Log environment info for debugging
       pipelineLogger.log(-1, 'env_info', {
         chunkMs: CHUNK_DURATION_MS,
         bffUrl: API?.TRANSCRIBE || 'not_set',
+        sessionId,
+      });
+      analytics.track('recording_start', {
+        audioConfig: {
+          sampleRate: recordingOptions.sampleRate,
+          extension: recordingOptions.extension,
+          bitRate: recordingOptions.bitRate,
+          channels: recordingOptions.numberOfChannels,
+        },
+        chunkDurationMs: CHUNK_DURATION_MS,
       });
 
       // Initialize ordered queue
@@ -428,6 +500,7 @@ export function useAudioRecording() {
       console.log('[Start] Recording started successfully');
     } catch (err) {
       console.error('[Start] Error:', err);
+      analytics.trackError(err, { phase: 'start_recording' });
       sm.transition(RecordingState.ERROR);
       sm.transition(RecordingState.IDLE);
       setRecording(false);
@@ -484,12 +557,15 @@ export function useAudioRecording() {
       sm.transition(RecordingState.IDLE);
       setRecording(false);
       const startedAt = useTranscriptStore.getState().sessionStartTime;
-      setSessionDurationMs(startedAt ? Date.now() - startedAt : null);
+      const sessionDurationMs = startedAt ? Date.now() - startedAt : null;
+      setSessionDurationMs(sessionDurationMs);
       setPipelineStatus('idle');
+      analytics.track('recording_stop', { sessionDurationMs, pendingSentence: !!sentenceBufferRef.current.trim() });
 
       console.log('[Stop] Recording stopped');
     } catch (err) {
       console.error('[Stop] Error:', err);
+      analytics.trackError(err, { phase: 'stop_recording' });
       if (watchdogRef.current) {
         clearInterval(watchdogRef.current);
         watchdogRef.current = null;

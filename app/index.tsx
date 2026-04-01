@@ -5,8 +5,8 @@
  * Region C: Vocabulary (collapsible)
  */
 
-import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StatusIndicator } from '../components/StatusIndicator';
@@ -16,8 +16,31 @@ import { ControlButtons } from '../components/ControlButtons';
 import { VocabularyCard } from '../components/VocabularyCard';
 import { VocabularySection } from '../components/VocabularySection';
 import { DebugPanel } from '../components/DebugPanel';
+import { analytics } from '../services/analyticsService';
+import { useTranscriptStore } from '../store/transcriptStore';
 
 export default function MainScreen() {
+  useEffect(() => {
+    analytics.startFlushCycle();
+    analytics.track('app_enter', {
+      platform: Platform.OS,
+      systemVersion: Platform.Version,
+      appVersion: process.env.EXPO_PUBLIC_APP_VERSION || 'unknown',
+      networkType: 'unknown',
+      deviceModel: 'unknown',
+    });
+
+    return () => {
+      const { sessionStartTime, isRecording } = useTranscriptStore.getState();
+      analytics.track('session_end', {
+        reason: 'screen_unmount',
+        isRecording,
+        sessionDurationMs: sessionStartTime ? Date.now() - sessionStartTime : null,
+      });
+      analytics.stopFlushCycle();
+    };
+  }, []);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>

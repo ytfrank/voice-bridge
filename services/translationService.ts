@@ -12,33 +12,62 @@ export interface TranslationResult {
   words?: VocabularyWord[];
 }
 
+export interface TranslationRequestMeta {
+  requestId?: string;
+  sessionId?: string;
+  segmentIds?: number[];
+}
+
 /**
  * Translate English text to Chinese with vocabulary notes
  */
-export async function translateText(text: string): Promise<TranslationResult> {
+export async function translateText(text: string, meta: TranslationRequestMeta = {}): Promise<TranslationResult> {
   const t0 = Date.now();
-  pipelineLogger.log(-1, 'translate_start', { inputLen: text.length, text: text.substring(0, 50) });
+  pipelineLogger.log(meta.segmentIds?.[0] ?? -1, 'translate_start', {
+    inputLen: text.length,
+    text: text.substring(0, 50),
+    requestId: meta.requestId,
+    sessionId: meta.sessionId,
+  });
 
   try {
     const response = await fetch(API.TRANSLATE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(meta.sessionId ? { 'X-Session-Id': meta.sessionId } : {}),
+        ...(meta.requestId ? { 'X-Request-Id': meta.requestId } : {}),
+      },
+      body: JSON.stringify({
+        text,
+        sessionId: meta.sessionId,
+        requestId: meta.requestId,
+        segmentIds: meta.segmentIds,
+      }),
     });
 
     if (!response.ok) {
       const ms = Date.now() - t0;
-      pipelineLogger.log(-1, 'translate_error', { status: response.status, ms });
-      errorReporter.report(`Translate HTTP ${response.status}`, { inputLen: text.length });
+      pipelineLogger.log(meta.segmentIds?.[0] ?? -1, 'translate_error', {
+        status: response.status,
+        ms,
+        requestId: meta.requestId,
+      });
+      errorReporter.report(`Translate HTTP ${response.status}`, {
+        inputLen: text.length,
+        requestId: meta.requestId,
+        sessionId: meta.sessionId,
+      });
       return { translation: '翻译失败', words: [] };
     }
 
     const data = await response.json();
     const ms = Date.now() - t0;
-    pipelineLogger.log(-1, 'translate_done', {
+    pipelineLogger.log(meta.segmentIds?.[0] ?? -1, 'translate_done', {
       ms,
       translation: (data.translation || '').substring(0, 40),
       wordsCount: (data.words || []).length,
+      requestId: meta.requestId,
     });
 
     return {
@@ -54,8 +83,17 @@ export async function translateText(text: string): Promise<TranslationResult> {
   } catch (err) {
     const ms = Date.now() - t0;
     const errMsg = err instanceof Error ? err.message : String(err);
-    pipelineLogger.log(-1, 'translate_error', { error: errMsg.substring(0, 80), ms });
-    errorReporter.report(err instanceof Error ? err : new Error(errMsg), { phase: 'translate' });
+    pipelineLogger.log(meta.segmentIds?.[0] ?? -1, 'translate_error', {
+      error: errMsg.substring(0, 80),
+      ms,
+      requestId: meta.requestId,
+    });
+    errorReporter.report(err instanceof Error ? err : new Error(errMsg), {
+      phase: 'translate',
+      requestId: meta.requestId,
+      sessionId: meta.sessionId,
+      segmentIds: meta.segmentIds,
+    });
     return { translation: '网络错误，翻译失败', words: [] };
   }
 }
@@ -66,17 +104,27 @@ export async function translateText(text: string): Promise<TranslationResult> {
  */
 export async function translateTextStream(
   text: string,
-  onUpdate: (partial: string) => void
+  onUpdate: (partial: string) => void,
+  meta: TranslationRequestMeta = {}
 ): Promise<string> {
   try {
     const response = await fetch(API.TRANSLATE_STREAM, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(meta.sessionId ? { 'X-Session-Id': meta.sessionId } : {}),
+        ...(meta.requestId ? { 'X-Request-Id': meta.requestId } : {}),
+      },
+      body: JSON.stringify({
+        text,
+        sessionId: meta.sessionId,
+        requestId: meta.requestId,
+        segmentIds: meta.segmentIds,
+      }),
     });
 
     if (!response.ok || !response.body) {
-      const result = await translateText(text);
+      const result = await translateText(text, meta);
       onUpdate(result.translation);
       return result.translation;
     }
@@ -120,7 +168,7 @@ export async function translateTextStream(
     return fullText;
   } catch (err) {
     console.error('Stream translation failed:', err);
-    const result = await translateText(text);
+    const result = await translateText(text, meta);
     onUpdate(result.translation);
     return result.translation;
   }
