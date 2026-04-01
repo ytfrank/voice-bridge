@@ -4,7 +4,12 @@
 `dev_v1.6`
 
 ## Commit
-`80f364c`
+`6b8f39d`
+
+## 修复说明（Guard 打回后补充）
+- 修复 `backend/server.js` 中 `finish` 回调再次调用 trace 绑定导致潜在 `ERR_HTTP_HEADERS_SENT` 的问题
+- 处理方式：拆分“提取 trace”与“写响应头”职责，`finish` 回调只读取 `req.reqId / req.sessionId`，不再写 header
+- 修复后补做最小验证：`node --check backend/server.js` 通过
 
 ## 改动摘要
 本轮完成 V1.6 Phase 1（P0 可观测性）前后端最小闭环，实现“用户链路可追踪、前后端日志可关联”的基础能力。
