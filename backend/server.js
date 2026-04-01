@@ -84,12 +84,16 @@ function attachTraceContext(req, data = null) {
 
   req.reqId = requestId;
   if (sessionId) req.sessionId = sessionId;
-  if (req.res?.setHeader) {
-    req.res.setHeader('X-Request-Id', requestId);
-    if (sessionId) req.res.setHeader('X-Session-Id', sessionId);
-  }
 
   return { requestId, sessionId: sessionId || null };
+}
+
+function writeTraceHeaders(res, trace) {
+  if (!res?.setHeader || !trace?.requestId) return;
+  res.setHeader('X-Request-Id', trace.requestId);
+  if (trace.sessionId) {
+    res.setHeader('X-Session-Id', trace.sessionId);
+  }
 }
 
 function normalizeLogData(data = null) {
@@ -164,18 +168,14 @@ app.use((req, res, next) => {
   const trace = attachTraceContext(req);
   const t0 = Date.now();
 
-  res.setHeader('X-Request-Id', trace.requestId);
-  if (trace.sessionId) {
-    res.setHeader('X-Session-Id', trace.sessionId);
-  }
+  writeTraceHeaders(res, trace);
 
   res.on('finish', () => {
     const ms = Date.now() - t0;
     if (req.path !== '/health' && req.path !== '/favicon.ico') {
-      const finalTrace = attachTraceContext(req);
       log('info', 'HTTP', `${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`, {
-        requestId: finalTrace.requestId,
-        sessionId: finalTrace.sessionId,
+        requestId: req.reqId || trace.requestId,
+        sessionId: req.sessionId || trace.sessionId,
         step: 'http_request',
         duration: ms,
         method: req.method,
