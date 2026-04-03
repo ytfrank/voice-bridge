@@ -802,6 +802,18 @@ function tokenizeEnglish(text = '') {
   return normalizeText(text).toLowerCase().split(/[^a-zA-Z']+/).filter(Boolean);
 }
 
+const LOW_VALUE_TOKENS = new Set([
+  'oh', 'uh', 'um', 'ah', 'huh', 'hmm', 'mm', 'mhm', 'huh', 'eh', 'er', 'erm',
+  'yo', 'yeah', 'yep', 'nope', 'you',
+]);
+
+function isLowValueUtterance(tokens = [], normalizedText = '') {
+  if (!tokens.length) return false;
+  if (tokens.length <= 2 && tokens.every((token) => LOW_VALUE_TOKENS.has(token))) return true;
+  if (tokens.length === 1 && normalizedText.replace(/[^a-zA-Z]/g, '').length <= 4) return true;
+  return false;
+}
+
 function buildTextRepetitionStats(text = '') {
   const tokens = tokenizeEnglish(text);
   if (!tokens.length) {
@@ -842,6 +854,7 @@ function buildTextRepetitionStats(text = '') {
 
 function assessTextQuality(text = '', metadata = {}) {
   const normalizedText = normalizeText(text);
+  const tokens = tokenizeEnglish(normalizedText);
   const stats = buildTextRepetitionStats(normalizedText);
   const durationSec = Number(metadata?.durationSec || metadata?.duration || 0) || null;
   const avgLogprob = metadata?.avgLogprob ?? null;
@@ -850,6 +863,12 @@ function assessTextQuality(text = '', metadata = {}) {
   const charsPerSecond = metadata?.charsPerSecond ?? (durationSec && normalizedText
     ? normalizedText.replace(/\s+/g, '').length / durationSec
     : null);
+
+  if (!normalizedText && !metadata?.emptyReason) {
+    metadata.emptyReason = maxNoSpeechProb !== null && maxNoSpeechProb > 0.7
+      ? 'no_speech'
+      : 'empty_transcript';
+  }
 
   const reasons = [];
   if (!normalizedText) reasons.push('empty_text');
@@ -860,7 +879,8 @@ function assessTextQuality(text = '', metadata = {}) {
   if (languageProbability !== null && languageProbability < 0.45) reasons.push('language_uncertain');
   if (stats.maxRepeatedRun >= 4 || stats.repeatedBigramRatio >= 0.35) reasons.push('repetitive_text');
   if (charsPerSecond !== null && charsPerSecond > 22) reasons.push('text_audio_mismatch');
-  if (durationSec !== null && durationSec >= 2 && stats.tokenCount <= 1) reasons.push('too_little_text_for_audio');
+  if (durationSec !== null && durationSec >= 0.8 && stats.tokenCount <= 1) reasons.push('too_little_text_for_audio');
+  if (isLowValueUtterance(tokens, normalizedText)) reasons.push('low_value_text');
 
   const uniqueReasons = [...new Set(reasons.filter(Boolean))];
   const allowed = uniqueReasons.length === 0;
@@ -872,6 +892,7 @@ function assessTextQuality(text = '', metadata = {}) {
     stats: {
       ...stats,
       charsPerSecond: charsPerSecond === null ? null : Number(charsPerSecond.toFixed(4)),
+      isLowValueUtterance: isLowValueUtterance(tokens, normalizedText),
     },
     normalizedText,
   };
@@ -891,10 +912,15 @@ function classifyAsrError(error) {
 }
 
 function buildAsrResponse({ text = '', quality, metadata = {}, trace, requestId, sessionId, skipped = false }) {
+  const normalizedText = normalizeText(text);
+  const finalSkipped = Boolean(skipped || !normalizedText);
+  const finalReason = metadata?.emptyReason || quality?.primaryReason || (finalSkipped ? 'filtered' : null);
+
   return {
-    text,
-    skipped,
-    reason: skipped ? (metadata?.emptyReason || quality?.primaryReason || 'filtered') : null,
+    text: normalizedText,
+    skipped: finalSkipped,
+    reason: finalReason,
+    reasons: finalSkipped ? (quality?.reasons || (finalReason ? [finalReason] : [])) : [],
     requestId: requestId || trace?.requestId,
     sessionId: sessionId || trace?.sessionId || undefined,
     asr: {
@@ -993,8 +1019,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     }
 
     const processStats = fs.statSync(processPath);
-    const processProbe = await probeAudio(processPath);
-    const effectiveDurationSec = processProbe?.durationSec ?? inputProbe?.durationSec ?? null;
+    const effectiveDurationSec = inputProbe?.durationSec ?? null;
 
     if (effectiveDurationSec !== null && effectiveDurationSec < MIN_AUDIO_DURATION_SEC) {
       log('warn', 'ASR', 'Audio too short after probe', {
@@ -1053,7 +1078,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     const metadata = {
       ...(result.metadata || {}),
       inputProbe,
-      normalizedProbe: processProbe,
       sourceBytes: req.file.size,
       processedBytes: processStats.size,
       whisperMs,

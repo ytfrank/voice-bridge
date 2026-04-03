@@ -134,7 +134,38 @@
 
 ---
 
-## 六、已知风险 / 边界
+## 六、本轮 QA 回退后的修复补充（2026-04-04 二次修复）
+
+针对 Guard 本轮回退问题，已补以下修复：
+
+1. **P1-1 幻觉/低价值文本拦截**
+   - 在 API 层补强 `low_value_text` 规则
+   - 对单词级 filler / 短促无价值 utterance（如 `oh / uh / ah / you`）直接拦截
+   - 将“音频时长 >= 0.8s 但仅 1 token”的情况也判为低质量，避免 `musk_21s.wav -> You` 漏拦截
+
+2. **P1-2 空结果分类结构化返回**
+   - 空文本若无明确 `emptyReason`，后端自动补成 `empty_transcript` 或 `no_speech`
+   - `buildAsrResponse()` 统一保证空文本返回：
+     - `skipped: true`
+     - `reason`
+     - `reasons[]`
+
+3. **P1-3 延迟止损**
+   - 去掉一次多余的归一化后 `ffprobe` 探测，降低单次请求额外开销
+   - 本轮属于止损，不宣称已完成延迟目标，仍需 Guard 重测
+
+4. **P2-4 `services:status` 缺失**
+   - 已在根 `package.json` 补齐：
+     - `services:start`
+     - `services:stop`
+     - `services:status`
+
+### 二次修复定向自测
+- `npm run services:status` ✅
+- `silence_1s.wav` → 返回 `skipped: true` + `reason: empty_transcript` ✅
+- `musk_21s.wav` → 返回空文本，`reason: high_no_speech_prob`，不再透出 `You` ✅
+
+## 七、已知风险 / 边界
 
 1. **质量门阈值是保守初始值**
    - 可能需要根据 Guard 测试数据微调
