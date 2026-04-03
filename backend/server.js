@@ -22,6 +22,11 @@ const PORT = process.env.BFF_PORT || 3001;
 const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
 const WHISPER_MODEL = process.env.WHISPER_MODEL || 'base';
 const WHISPER_WORKERS = parseInt(process.env.WHISPER_WORKERS || '2', 10);
+const WHISPER_TIMEOUT_MS = parseInt(process.env.WHISPER_TIMEOUT_MS || '30000', 10);
+const WHISPER_QUEUE_TTL_MS = parseInt(process.env.WHISPER_QUEUE_TTL_MS || '20000', 10);
+const WHISPER_MAX_QUEUE = parseInt(process.env.WHISPER_MAX_QUEUE || '24', 10);
+const MIN_AUDIO_BYTES = parseInt(process.env.MIN_AUDIO_BYTES || '512', 10);
+const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || '0.35');
 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
@@ -201,27 +206,116 @@ const upload = multer({
 
 // Whisper worker pool
 class WhisperWorkerPool {
-  constructor(maxWorkers) {
+  constructor(maxWorkers, options = {}) {
     this.maxWorkers = maxWorkers;
+    this.maxQueue = options.maxQueue || WHISPER_MAX_QUEUE;
+    this.queueTtlMs = options.queueTtlMs || WHISPER_QUEUE_TTL_MS;
     this.activeWorkers = 0;
+    this.activeSessions = new Set();
     this.queue = [];
   }
 
-  async process(audioPath, trace = {}) {
+  async process(audioPath, trace = {}, options = {}) {
     return new Promise((resolve, reject) => {
-      const task = { audioPath, resolve, reject, trace };
-      
-      if (this.activeWorkers < this.maxWorkers) {
-        this._runTask(task);
-      } else {
-        this.queue.push(task);
+      this._cleanupExpiredQueue();
+
+      if (this.queue.length >= this.maxQueue) {
+        const error = new Error('Whisper queue full');
+        error.code = 'queue_full';
+        return reject(error);
       }
+
+      this.queue.push({
+        audioPath,
+        resolve,
+        reject,
+        trace,
+        sessionId: trace?.sessionId || null,
+        fileSize: options.fileSize || 0,
+        enqueueAt: Date.now(),
+        expiresAt: Date.now() + this.queueTtlMs,
+      });
+
+      this._drainQueue();
     });
   }
 
+  getStats() {
+    return {
+      activeWorkers: this.activeWorkers,
+      maxWorkers: this.maxWorkers,
+      queued: this.queue.length,
+      activeSessions: this.activeSessions.size,
+      maxQueue: this.maxQueue,
+      queueTtlMs: this.queueTtlMs,
+    };
+  }
+
+  _cleanupExpiredQueue() {
+    const now = Date.now();
+    const keep = [];
+
+    for (const task of this.queue) {
+      if (task.expiresAt <= now) {
+        const error = new Error('Whisper queue wait expired');
+        error.code = 'queue_timeout';
+        task.reject(error);
+        log('warn', 'Whisper', 'Dropped stale queued task', {
+          requestId: task.trace?.requestId,
+          sessionId: task.trace?.sessionId,
+          step: 'whisper_queue_drop_stale',
+          queueWaitMs: now - task.enqueueAt,
+          file: path.basename(task.audioPath),
+        });
+      } else {
+        keep.push(task);
+      }
+    }
+
+    this.queue = keep;
+  }
+
+  _findNextRunnableTaskIndex() {
+    let bestIndex = -1;
+
+    for (let idx = 0; idx < this.queue.length; idx += 1) {
+      const task = this.queue[idx];
+      if (task.sessionId && this.activeSessions.has(task.sessionId)) continue;
+
+      if (bestIndex === -1) {
+        bestIndex = idx;
+        continue;
+      }
+
+      const best = this.queue[bestIndex];
+      const taskRank = task.fileSize || Number.MAX_SAFE_INTEGER;
+      const bestRank = best.fileSize || Number.MAX_SAFE_INTEGER;
+      if (taskRank < bestRank || (taskRank === bestRank && task.enqueueAt < best.enqueueAt)) {
+        bestIndex = idx;
+      }
+    }
+
+    return bestIndex;
+  }
+
+  _drainQueue() {
+    this._cleanupExpiredQueue();
+
+    while (this.activeWorkers < this.maxWorkers) {
+      const nextIndex = this._findNextRunnableTaskIndex();
+      if (nextIndex === -1) break;
+      const [task] = this.queue.splice(nextIndex, 1);
+      this._runTask(task);
+    }
+  }
+
   _runTask(task) {
-    this.activeWorkers++;
+    this.activeWorkers += 1;
+    if (task.sessionId) this.activeSessions.add(task.sessionId);
+
     const t0 = Date.now();
+    const queueWaitMs = t0 - task.enqueueAt;
+
     log('info', 'Whisper', `Worker start (${this.activeWorkers}/${this.maxWorkers})`, {
       requestId: task.trace?.requestId,
       sessionId: task.trace?.sessionId,
@@ -229,6 +323,8 @@ class WhisperWorkerPool {
       model: WHISPER_MODEL,
       file: path.basename(task.audioPath),
       queueLen: this.queue.length,
+      queueWaitMs,
+      activeSessions: this.activeSessions.size,
     });
 
     const python = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
@@ -238,88 +334,122 @@ class WhisperWorkerPool {
 
     let stdout = '';
     let stderr = '';
+    let finished = false;
+
+    const finalize = (error, result = null) => {
+      if (finished) return;
+      finished = true;
+      this._complete(task, error, result, t0, queueWaitMs);
+    };
 
     proc.stdout.on('data', (data) => { stdout += data; });
     proc.stderr.on('data', (data) => { stderr += data; });
 
     const timeout = setTimeout(() => {
-      proc.kill();
-      log('error', 'Whisper', 'Timeout (30s)', {
+      try { proc.kill('SIGKILL'); } catch {}
+      const error = new Error('Whisper timeout');
+      error.code = 'timeout';
+      log('error', 'Whisper', `Timeout (${WHISPER_TIMEOUT_MS}ms)`, {
         requestId: task.trace?.requestId,
         sessionId: task.trace?.sessionId,
         step: 'whisper_worker_timeout',
         file: path.basename(task.audioPath),
+        queueWaitMs,
       });
-      this._complete(task, new Error('Whisper timeout'), null, t0);
-    }, 30000);
+      finalize(error);
+    }, WHISPER_TIMEOUT_MS);
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
+      if (finished) return;
+
       if (code !== 0) {
+        const error = new Error(`Whisper failed: ${stderr || stdout}`);
+        error.code = 'process_failed';
         log('error', 'Whisper', `Failed (code ${code})`, {
           requestId: task.trace?.requestId,
           sessionId: task.trace?.sessionId,
           step: 'whisper_worker_failed',
           stderr: stderr.substring(0, 200),
+          queueWaitMs,
         });
-        this._complete(task, new Error(`Whisper failed: ${stderr || stdout}`), null, t0);
-      } else {
-        try {
-          const result = JSON.parse(stdout);
-          log('info', 'Whisper', `Done (${Date.now() - t0}ms)`, {
-            requestId: task.trace?.requestId,
-            sessionId: task.trace?.sessionId,
-            step: 'whisper_worker_done',
-            duration: Date.now() - t0,
-            text: (result.text || '').substring(0, 80),
-            textLen: (result.text || '').length,
-          });
-          this._complete(task, null, result, t0);
-        } catch (e) {
-          log('error', 'Whisper', 'Invalid JSON output', {
-            requestId: task.trace?.requestId,
-            sessionId: task.trace?.sessionId,
-            step: 'whisper_worker_invalid_json',
-            stdout: stdout.substring(0, 200),
-          });
-          this._complete(task, new Error(`Invalid JSON from Whisper: ${stdout}`), null, t0);
-        }
+        finalize(error);
+        return;
+      }
+
+      try {
+        const result = JSON.parse(stdout);
+        log('info', 'Whisper', `Done (${Date.now() - t0}ms)`, {
+          requestId: task.trace?.requestId,
+          sessionId: task.trace?.sessionId,
+          step: 'whisper_worker_done',
+          duration: Date.now() - t0,
+          text: (result.text || '').substring(0, 80),
+          textLen: (result.text || '').length,
+          queueWaitMs,
+          emptyReason: result.metadata?.emptyReason,
+          qualityFlags: result.metadata?.qualityFlags,
+        });
+        finalize(null, result);
+      } catch (e) {
+        const error = new Error(`Invalid JSON from Whisper: ${stdout}`);
+        error.code = 'invalid_json';
+        log('error', 'Whisper', 'Invalid JSON output', {
+          requestId: task.trace?.requestId,
+          sessionId: task.trace?.sessionId,
+          step: 'whisper_worker_invalid_json',
+          stdout: stdout.substring(0, 200),
+          queueWaitMs,
+        });
+        finalize(error);
       }
     });
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
+      if (finished) return;
+      err.code = err.code || 'process_error';
       log('error', 'Whisper', 'Process error', {
         requestId: task.trace?.requestId,
         sessionId: task.trace?.sessionId,
         step: 'whisper_worker_process_error',
         error: err.message,
         stack: err.stack?.substring(0, 300),
+        queueWaitMs,
       });
-      this._complete(task, err, null, t0);
+      finalize(err);
     });
   }
 
-  _complete(task, error, result, t0) {
-    this.activeWorkers--;
+  _complete(task, error, result, t0, queueWaitMs = 0) {
+    this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+    if (task.sessionId) this.activeSessions.delete(task.sessionId);
     const ms = t0 ? Date.now() - t0 : 0;
-    log('debug', 'Whisper', `Worker done (${this.activeWorkers}/${this.maxWorkers}, ${ms}ms)`);
-    
+
+    log(error ? 'warn' : 'debug', 'Whisper', `Worker done (${this.activeWorkers}/${this.maxWorkers}, ${ms}ms)`, {
+      requestId: task.trace?.requestId,
+      sessionId: task.trace?.sessionId,
+      step: 'whisper_worker_release',
+      duration: ms,
+      queueWaitMs,
+      error: error?.message,
+    });
+
     if (error) {
       task.reject(error);
     } else {
       task.resolve(result);
     }
 
-    // Process next task in queue
-    if (this.queue.length > 0 && this.activeWorkers < this.maxWorkers) {
-      const nextTask = this.queue.shift();
-      this._runTask(nextTask);
-    }
+    setImmediate(() => this._drainQueue());
   }
 }
 
-const whisperPool = new WhisperWorkerPool(WHISPER_WORKERS);
+const whisperPool = new WhisperWorkerPool(WHISPER_WORKERS, {
+  maxQueue: WHISPER_MAX_QUEUE,
+  queueTtlMs: WHISPER_QUEUE_TTL_MS,
+});
+
 
 const EXPO_PORT_CANDIDATES = (process.env.EXPO_PORTS || '8081,8082,19000,19006')
   .split(',')
@@ -570,6 +700,211 @@ app.get('/api/meta/expo-link', async (req, res) => {
   });
 });
 
+function safeUnlink(filePath) {
+  if (!filePath) return;
+  fs.unlink(filePath, () => {});
+}
+
+async function probeAudio(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+
+  return new Promise((resolve) => {
+    const ffprobe = spawn('ffprobe', [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_streams',
+      '-show_format',
+      filePath,
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    ffprobe.stdout.on('data', (data) => { stdout += data.toString(); });
+    ffprobe.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    ffprobe.on('close', (code) => {
+      if (code !== 0) return finish(null);
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        const audioStream = (parsed.streams || []).find((stream) => stream.codec_type === 'audio') || {};
+        const duration = Number(parsed.format?.duration || audioStream.duration || 0);
+        finish({
+          durationSec: Number.isFinite(duration) ? duration : null,
+          sampleRate: audioStream.sample_rate ? Number(audioStream.sample_rate) : null,
+          channels: audioStream.channels || null,
+          codec: audioStream.codec_name || null,
+          bitRate: parsed.format?.bit_rate ? Number(parsed.format.bit_rate) : null,
+        });
+      } catch {
+        finish(null);
+      }
+    });
+
+    ffprobe.on('error', () => finish(null));
+
+    setTimeout(() => {
+      try { ffprobe.kill('SIGKILL'); } catch {}
+      finish(null);
+    }, 3000);
+  });
+}
+
+async function normalizeAudio(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-y', '-i', inputPath,
+      '-vn',
+      '-ac', '1',
+      '-ar', '16000',
+      '-acodec', 'pcm_s16le',
+      '-loglevel', 'error',
+      outputPath,
+    ]);
+
+    let stderr = '';
+    let settled = false;
+
+    const finish = (err = null) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err); else resolve();
+    };
+
+    ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+    ffmpeg.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath)) {
+        finish();
+      } else {
+        finish(new Error(`ffmpeg failed (code ${code}): ${stderr.substring(0, 200)}`));
+      }
+    });
+    ffmpeg.on('error', (err) => finish(err));
+    setTimeout(() => {
+      try { ffmpeg.kill('SIGKILL'); } catch {}
+      finish(new Error('ffmpeg timeout'));
+    }, 15000);
+  });
+}
+
+function normalizeText(text = '') {
+  return String(text).replace(/\s+/g, ' ').trim();
+}
+
+function tokenizeEnglish(text = '') {
+  return normalizeText(text).toLowerCase().split(/[^a-zA-Z']+/).filter(Boolean);
+}
+
+function buildTextRepetitionStats(text = '') {
+  const tokens = tokenizeEnglish(text);
+  if (!tokens.length) {
+    return {
+      tokenCount: 0,
+      uniqueTokenRatio: 0,
+      maxRepeatedRun: 0,
+      repeatedBigramRatio: 0,
+    };
+  }
+
+  let maxRepeatedRun = 1;
+  let currentRun = 1;
+  for (let idx = 1; idx < tokens.length; idx += 1) {
+    if (tokens[idx] === tokens[idx - 1]) {
+      currentRun += 1;
+      maxRepeatedRun = Math.max(maxRepeatedRun, currentRun);
+    } else {
+      currentRun = 1;
+    }
+  }
+
+  const bigrams = [];
+  for (let idx = 0; idx < tokens.length - 1; idx += 1) {
+    bigrams.push(`${tokens[idx]} ${tokens[idx + 1]}`);
+  }
+  const repeatedBigramRatio = bigrams.length
+    ? (bigrams.length - new Set(bigrams).size) / bigrams.length
+    : 0;
+
+  return {
+    tokenCount: tokens.length,
+    uniqueTokenRatio: tokens.length ? new Set(tokens).size / tokens.length : 0,
+    maxRepeatedRun,
+    repeatedBigramRatio,
+  };
+}
+
+function assessTextQuality(text = '', metadata = {}) {
+  const normalizedText = normalizeText(text);
+  const stats = buildTextRepetitionStats(normalizedText);
+  const durationSec = Number(metadata?.durationSec || metadata?.duration || 0) || null;
+  const avgLogprob = metadata?.avgLogprob ?? null;
+  const maxNoSpeechProb = metadata?.maxNoSpeechProb ?? null;
+  const languageProbability = metadata?.languageProbability ?? null;
+  const charsPerSecond = metadata?.charsPerSecond ?? (durationSec && normalizedText
+    ? normalizedText.replace(/\s+/g, '').length / durationSec
+    : null);
+
+  const reasons = [];
+  if (!normalizedText) reasons.push('empty_text');
+  if (metadata?.emptyReason) reasons.push(metadata.emptyReason);
+  if (normalizedText.length > 0 && normalizedText.length < 2) reasons.push('text_too_short');
+  if (avgLogprob !== null && avgLogprob < -1.1) reasons.push('low_logprob');
+  if (maxNoSpeechProb !== null && maxNoSpeechProb > 0.7) reasons.push('high_no_speech_prob');
+  if (languageProbability !== null && languageProbability < 0.45) reasons.push('language_uncertain');
+  if (stats.maxRepeatedRun >= 4 || stats.repeatedBigramRatio >= 0.35) reasons.push('repetitive_text');
+  if (charsPerSecond !== null && charsPerSecond > 22) reasons.push('text_audio_mismatch');
+  if (durationSec !== null && durationSec >= 2 && stats.tokenCount <= 1) reasons.push('too_little_text_for_audio');
+
+  const uniqueReasons = [...new Set(reasons.filter(Boolean))];
+  const allowed = uniqueReasons.length === 0;
+
+  return {
+    allowed,
+    primaryReason: uniqueReasons[0] || null,
+    reasons: uniqueReasons,
+    stats: {
+      ...stats,
+      charsPerSecond: charsPerSecond === null ? null : Number(charsPerSecond.toFixed(4)),
+    },
+    normalizedText,
+  };
+}
+
+function classifyAsrError(error) {
+  switch (error?.code) {
+    case 'timeout':
+      return { status: 504, reason: 'timeout', message: 'Whisper timeout' };
+    case 'queue_timeout':
+      return { status: 504, reason: 'queue_timeout', message: 'Whisper queue wait expired' };
+    case 'queue_full':
+      return { status: 503, reason: 'queue_full', message: 'Whisper queue full' };
+    default:
+      return { status: 500, reason: 'transcription_failure', message: error?.message || 'Transcription failed' };
+  }
+}
+
+function buildAsrResponse({ text = '', quality, metadata = {}, trace, requestId, sessionId, skipped = false }) {
+  return {
+    text,
+    skipped,
+    reason: skipped ? (metadata?.emptyReason || quality?.primaryReason || 'filtered') : null,
+    requestId: requestId || trace?.requestId,
+    sessionId: sessionId || trace?.sessionId || undefined,
+    asr: {
+      metadata,
+      quality,
+    },
+  };
+}
+
+
 // Health check
 app.get('/health', async (req, res) => {
   const resolved = await resolveExpoGoUrl();
@@ -581,6 +916,7 @@ app.get('/health', async (req, res) => {
     python: fs.existsSync(VENV_PYTHON) ? 'venv' : 'system',
     expoGoUrl: resolved.value,
     expoSource: resolved.source,
+    whisperQueue: whisperPool.getStats(),
   });
 });
 
@@ -591,6 +927,9 @@ app.get('/health', async (req, res) => {
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   const t0 = Date.now();
   const trace = attachTraceContext(req, req.body);
+  let audioPath = null;
+  let normalizedPath = null;
+
   try {
     if (!req.file) {
       log('warn', 'ASR', 'No audio file in request', {
@@ -601,7 +940,10 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    const audioPath = req.file.path;
+    audioPath = req.file.path;
+    normalizedPath = `${audioPath}_normalized.wav`;
+    let processPath = audioPath;
+
     log('info', 'ASR', 'Received audio', {
       requestId: trace.requestId,
       sessionId: trace.sessionId,
@@ -611,45 +953,26 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       originalName: req.file.originalname,
     });
 
-    // Skip empty/tiny audio files that cause Whisper "cannot reshape tensor" errors
-    if (req.file.size < 1024) {
+    if (req.file.size < MIN_AUDIO_BYTES) {
       log('warn', 'ASR', `Skipping tiny audio: ${req.file.size} bytes`, {
         requestId: trace.requestId,
         sessionId: trace.sessionId,
         step: 'asr_skip_tiny_audio',
         size: req.file.size,
       });
-      fs.unlink(audioPath, () => {});
-      return res.json({ text: '', skipped: true, reason: 'audio_too_short' });
+      return res.json(buildAsrResponse({
+        text: '',
+        trace,
+        skipped: true,
+        metadata: { emptyReason: 'audio_too_short', sourceBytes: req.file.size },
+        quality: assessTextQuality('', { emptyReason: 'audio_too_short' }),
+      }));
     }
 
-    // Normalize audio: convert to mono 16kHz WAV (Whisper's native format)
-    const normalizedPath = audioPath + '_normalized.wav';
-    let processPath = audioPath;
+    const inputProbe = await probeAudio(audioPath);
     const normT0 = Date.now();
     try {
-      await new Promise((resolve, reject) => {
-        const ffmpeg = spawn('ffmpeg', [
-          '-y', '-i', audioPath,
-          '-vn',           // strip video
-          '-ac', '1',      // mono
-          '-ar', '16000',  // 16kHz (Whisper native)
-          '-acodec', 'pcm_s16le',  // 16-bit PCM
-          '-loglevel', 'error',
-          normalizedPath,
-        ]);
-        let stderr = '';
-        ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
-        ffmpeg.on('close', (code) => {
-          if (code === 0 && fs.existsSync(normalizedPath)) {
-            resolve();
-          } else {
-            reject(new Error(`ffmpeg failed (code ${code}): ${stderr.substring(0, 200)}`));
-          }
-        });
-        ffmpeg.on('error', reject);
-        setTimeout(() => { try { ffmpeg.kill(); } catch {} reject(new Error('ffmpeg timeout')); }, 15000);
-      });
+      await normalizeAudio(audioPath, normalizedPath);
       processPath = normalizedPath;
       const normSize = fs.statSync(normalizedPath).size;
       log('info', 'ASR', `Normalized (${Date.now() - normT0}ms)`, {
@@ -661,7 +984,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         to: normSize,
       });
     } catch (normErr) {
-      log('warn', 'ASR', `Normalization failed, using original`, {
+      log('warn', 'ASR', 'Normalization failed, using original', {
         requestId: trace.requestId,
         sessionId: trace.sessionId,
         step: 'asr_normalization_failed',
@@ -669,32 +992,112 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       });
     }
 
-    const processSize = fs.statSync(processPath).size;
-    log('info', 'ASR', `Queuing for Whisper`, {
+    const processStats = fs.statSync(processPath);
+    const processProbe = await probeAudio(processPath);
+    const effectiveDurationSec = processProbe?.durationSec ?? inputProbe?.durationSec ?? null;
+
+    if (effectiveDurationSec !== null && effectiveDurationSec < MIN_AUDIO_DURATION_SEC) {
+      log('warn', 'ASR', 'Audio too short after probe', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_skip_short_duration',
+        durationSec: effectiveDurationSec,
+        size: processStats.size,
+      });
+      return res.json(buildAsrResponse({
+        text: '',
+        trace,
+        skipped: true,
+        metadata: {
+          emptyReason: 'audio_too_short',
+          durationSec: effectiveDurationSec,
+          sourceBytes: processStats.size,
+        },
+        quality: assessTextQuality('', { emptyReason: 'audio_too_short', durationSec: effectiveDurationSec }),
+      }));
+    }
+
+    log('info', 'ASR', 'Queuing for Whisper', {
       requestId: trace.requestId,
       sessionId: trace.sessionId,
       step: 'asr_queue_whisper',
-      size: processSize,
+      size: processStats.size,
       model: WHISPER_MODEL,
+      durationSec: effectiveDurationSec,
+      queue: whisperPool.getStats(),
     });
 
     const whisperT0 = Date.now();
-    const result = await whisperPool.process(processPath, trace);
+    let result;
+    try {
+      result = await whisperPool.process(processPath, trace, { fileSize: processStats.size });
+    } catch (workerErr) {
+      const classified = classifyAsrError(workerErr);
+      log(classified.status >= 500 ? 'error' : 'warn', 'ASR', classified.message, {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_worker_error',
+        duration: Date.now() - whisperT0,
+        reason: classified.reason,
+        error: workerErr.message,
+      });
+      return res.status(classified.status).json({
+        error: classified.message,
+        reason: classified.reason,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId || undefined,
+      });
+    }
     const whisperMs = Date.now() - whisperT0;
 
-    // Clean up files
-    if (processPath !== audioPath) fs.unlink(normalizedPath, () => {});
-    fs.unlink(audioPath, () => {});
+    const metadata = {
+      ...(result.metadata || {}),
+      inputProbe,
+      normalizedProbe: processProbe,
+      sourceBytes: req.file.size,
+      processedBytes: processStats.size,
+      whisperMs,
+    };
 
     if (!result.success) {
+      const reason = metadata.emptyReason || 'transcription_failure';
       log('error', 'ASR', 'Whisper returned error', {
         requestId: trace.requestId,
         sessionId: trace.sessionId,
         step: 'asr_whisper_error',
         duration: whisperMs,
         error: result.error,
+        reason,
       });
-      return res.status(500).json({ error: result.error || 'Transcription failed' });
+      return res.status(500).json({
+        error: result.error || 'Transcription failed',
+        reason,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId || undefined,
+      });
+    }
+
+    const quality = assessTextQuality(result.text || '', metadata);
+    if (!quality.allowed) {
+      const totalMs = Date.now() - t0;
+      log('warn', 'ASR', 'Filtered low-quality transcription', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_filtered_low_quality',
+        duration: totalMs,
+        whisperMs,
+        text: (result.text || '').substring(0, 120),
+        reason: quality.primaryReason,
+        reasons: quality.reasons,
+        metadata,
+      });
+      return res.json(buildAsrResponse({
+        text: '',
+        trace,
+        skipped: true,
+        metadata,
+        quality,
+      }));
     }
 
     const totalMs = Date.now() - t0;
@@ -707,9 +1110,16 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       textLen: (result.text || '').length,
       whisperMs,
       totalMs,
+      metadata,
     });
 
-    res.json({ text: result.text || '', requestId: trace.requestId, sessionId: trace.sessionId || undefined });
+    return res.json(buildAsrResponse({
+      text: quality.normalizedText,
+      trace,
+      metadata,
+      quality,
+      skipped: false,
+    }));
   } catch (err) {
     log('error', 'ASR', 'Unhandled error', {
       requestId: trace.requestId,
@@ -719,10 +1129,13 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       error: err.message,
       stack: err.stack?.substring(0, 500),
     });
-    if (req.file) fs.unlink(req.file.path, () => {});
-    res.status(500).json({ error: 'Internal server error', detail: err.message });
+    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+  } finally {
+    if (normalizedPath && normalizedPath !== audioPath) safeUnlink(normalizedPath);
+    safeUnlink(audioPath);
   }
 });
+
 
 /**
  * POST /api/translate
@@ -737,17 +1150,38 @@ app.post('/api/translate', async (req, res) => {
       return res.status(400).json({ error: 'No text provided' });
     }
 
+    const inputQuality = assessTextQuality(text, req.body?.asr?.metadata || req.body?.asrMeta || {});
+    if (!inputQuality.allowed) {
+      log('warn', 'Translate', 'Skipped low-quality translation input', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_skip_low_quality',
+        reason: inputQuality.primaryReason,
+        reasons: inputQuality.reasons,
+        text: String(text).substring(0, 120),
+      });
+      return res.json({
+        translation: '',
+        words: [],
+        skipped: true,
+        reason: inputQuality.primaryReason,
+        requestId: trace.requestId,
+        sessionId: trace.sessionId || undefined,
+      });
+    }
+
     if (!ZHIPU_API_KEY) {
       log('error', 'Translate', 'ZHIPU_API_KEY not configured');
       return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
     }
 
+    const safeText = inputQuality.normalizedText;
     log('info', 'Translate', 'Start', {
       requestId: trace.requestId,
       sessionId: trace.sessionId,
       step: 'translate_start',
-      inputLen: text.length,
-      text: text.substring(0, 80),
+      inputLen: safeText.length,
+      text: safeText.substring(0, 80),
     });
 
     const systemPrompt = '将以下英文翻译为中文。只返回中文翻译文本，不要JSON，不要其他内容。';
@@ -769,7 +1203,7 @@ app.post('/api/translate', async (req, res) => {
           model: 'glm-4-flash',
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: text },
+            { role: 'user', content: safeText },
           ],
           temperature: 0.1,
           max_tokens: 256,
@@ -805,13 +1239,13 @@ app.post('/api/translate', async (req, res) => {
       sessionId: trace.sessionId,
       step: 'translate_complete',
       duration: totalMs,
-      sourceText: text.substring(0, 120),
+      sourceText: safeText.substring(0, 120),
       translation: content.substring(0, 120),
       apiMs,
       totalMs,
     });
 
-    res.json({ translation: content.trim(), words: [], requestId: trace.requestId, sessionId: trace.sessionId || undefined });
+    return res.json({ translation: content.trim(), words: [], requestId: trace.requestId, sessionId: trace.sessionId || undefined });
   } catch (err) {
     const isTimeout = err.name === 'AbortError';
     log('error', 'Translate', isTimeout ? 'Timeout (10s)' : 'Unhandled error', {
@@ -822,9 +1256,10 @@ app.post('/api/translate', async (req, res) => {
       error: err.message,
       stack: isTimeout ? undefined : err.stack?.substring(0, 500),
     });
-    res.status(500).json({ error: isTimeout ? 'Translation timeout' : 'Internal server error' });
+    return res.status(500).json({ error: isTimeout ? 'Translation timeout' : 'Internal server error' });
   }
 });
+
 
 /**
  * POST /api/translate/stream
@@ -838,16 +1273,36 @@ app.post('/api/translate/stream', async (req, res) => {
       return res.status(400).json({ error: 'No text provided' });
     }
 
+    const inputQuality = assessTextQuality(text, req.body?.asr?.metadata || req.body?.asrMeta || {});
+    if (!inputQuality.allowed) {
+      log('warn', 'Translate', 'Skipped low-quality stream input', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'translate_stream_skip_low_quality',
+        reason: inputQuality.primaryReason,
+        reasons: inputQuality.reasons,
+      });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.write(`data: ${JSON.stringify({ skipped: true, reason: inputQuality.primaryReason, requestId: trace.requestId })}
+
+`);
+      res.end();
+      return;
+    }
+
     if (!ZHIPU_API_KEY) {
       return res.status(500).json({ error: 'ZHIPU_API_KEY not configured' });
     }
 
+    const safeText = inputQuality.normalizedText;
     log('info', 'Translate', 'Stream start', {
       requestId: trace.requestId,
       sessionId: trace.sessionId,
       step: 'translate_stream_start',
-      inputLen: text.length,
-      text: text.substring(0, 80),
+      inputLen: safeText.length,
+      text: safeText.substring(0, 80),
     });
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -873,7 +1328,7 @@ app.post('/api/translate/stream', async (req, res) => {
               role: 'system',
               content: '将英文翻译成自然流畅的中文。只输出中文，不要其他内容。',
             },
-            { role: 'user', content: text },
+            { role: 'user', content: safeText },
           ],
           temperature: 0.1,
           max_tokens: 256,
@@ -891,7 +1346,9 @@ app.post('/api/translate/stream', async (req, res) => {
         step: 'translate_stream_api_error',
         status: response.status,
       });
-      res.write(`data: ${JSON.stringify({ error: 'API error', requestId: trace.requestId })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: 'API error', requestId: trace.requestId })}
+
+`);
       res.end();
       return;
     }
@@ -935,6 +1392,7 @@ app.post('/api/translate/stream', async (req, res) => {
     res.status(500).json({ error: 'Internal server error', requestId: trace.requestId });
   }
 });
+
 
 /**
  * POST /api/error

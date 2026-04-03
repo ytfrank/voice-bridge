@@ -18,13 +18,23 @@ interface TranscribeOptions {
   sessionId?: string;
 }
 
+export interface TranscriptionResult {
+  text: string;
+  skipped?: boolean;
+  reason?: string;
+  status: number;
+}
+
 /**
  * Send an audio file to BFF for transcription
  * Retries once on failure (covers transient TLS/network errors)
  * @param audioUri - local file URI of the .m4a audio chunk
- * @returns transcribed text
+ * @returns structured transcription result
  */
-export async function transcribeAudio(audioUri: string, options: TranscribeOptions = {}): Promise<string> {
+export async function transcribeAudio(
+  audioUri: string,
+  options: TranscribeOptions = {}
+): Promise<TranscriptionResult> {
   const { segmentId, requestId, sessionId } = options;
   const t0 = Date.now();
 
@@ -68,16 +78,27 @@ export async function transcribeAudio(audioUri: string, options: TranscribeOptio
       );
 
       if (response.status === 200) {
-        const data = JSON.parse(response.body);
-        const text = data.text || '';
+        const data = JSON.parse(response.body || '{}');
+        const text = typeof data.text === 'string' ? data.text : '';
+        const skipped = Boolean(data.skipped);
+        const reason = typeof data.reason === 'string' ? data.reason : undefined;
+
         pipelineLogger.log(segmentId ?? -1, text ? 'asr_done' : 'asr_empty', {
           ms: uploadMs,
           textLen: text.length,
           text: text.substring(0, 60),
+          skipped,
+          reason,
           attempt: attempt + 1,
           requestId,
         });
-        return text;
+
+        return {
+          text,
+          skipped,
+          reason,
+          status: response.status,
+        };
       }
 
       if (response.status === 530) {
@@ -117,5 +138,9 @@ export async function transcribeAudio(audioUri: string, options: TranscribeOptio
     }
   }
 
-  return '';
+  return {
+    text: '',
+    status: 0,
+    reason: 'request_failed',
+  };
 }

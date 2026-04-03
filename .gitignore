@@ -18,3 +18,6 @@ backend/.env
 
 expo-env.d.ts
 # @end expo-clilogs/
+
+# AIOps monitor (not for git)
+monitor/

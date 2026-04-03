@@ -8,10 +8,13 @@ class WebSocketService {
   private reconnectDelay = 3000;
   private maxReconnectDelay = 30000;
   private isConnecting = false;
+  private shouldReconnect = false;
 
   connect(url: string) {
+    if (!url) return;
     if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) return;
     this.url = url;
+    this.shouldReconnect = true;
     this.isConnecting = true;
 
     try {
@@ -28,7 +31,10 @@ class WebSocketService {
         console.log('[WS] Disconnected');
         this.isConnecting = false;
         this.stopHeartbeat();
-        this.scheduleReconnect();
+        this.ws = null;
+        if (this.shouldReconnect) {
+          this.scheduleReconnect();
+        }
       };
 
       this.ws.onerror = (err) => {
@@ -42,11 +48,14 @@ class WebSocketService {
       };
     } catch (err) {
       this.isConnecting = false;
-      this.scheduleReconnect();
+      if (this.shouldReconnect) {
+        this.scheduleReconnect();
+      }
     }
   }
 
   disconnect() {
+    this.shouldReconnect = false;
     this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -75,10 +84,12 @@ class WebSocketService {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer) return;
+    if (!this.shouldReconnect || this.reconnectTimer || !this.url) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect(this.url);
+      if (this.shouldReconnect) {
+        this.connect(this.url || API.WS);
+      }
     }, this.reconnectDelay);
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
   }

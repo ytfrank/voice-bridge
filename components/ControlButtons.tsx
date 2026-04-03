@@ -27,12 +27,22 @@ export function ControlButtons() {
   } = useTranscriptStore();
   const { startRecording, stopRecording } = useAudioRecording();
   const [isSaving, setIsSaving] = useState(false);
+  const [isTogglingRecording, setIsTogglingRecording] = useState(false);
 
   const handleStartStop = async () => {
-    if (isRecording) {
-      await stopRecording();
-    } else {
-      await startRecording();
+    if (isTogglingRecording) return;
+    setIsTogglingRecording(true);
+    try {
+      if (isRecording) {
+        await stopRecording();
+      } else {
+        await startRecording();
+      }
+    } catch (err) {
+      analytics.trackError(err, { phase: 'recording_toggle', isRecording });
+      Alert.alert('录音操作失败', isRecording ? '停止录音失败，请重试' : '开始录音失败，请检查麦克风权限后重试');
+    } finally {
+      setIsTogglingRecording(false);
     }
   };
 
@@ -82,7 +92,7 @@ export function ControlButtons() {
   };
 
   const handleNewSession = () => {
-    if (isRecording) {
+    if (isRecording || isTogglingRecording) {
       Alert.alert('提示', '请先停止录音');
       return;
     }
@@ -101,6 +111,8 @@ export function ControlButtons() {
     ]);
   };
 
+  const startStopDisabled = isTogglingRecording || isSaving;
+
   return (
     <View style={styles.container}>
       {/* Start / Stop button */}
@@ -108,22 +120,24 @@ export function ControlButtons() {
         style={[
           styles.button,
           isRecording ? styles.stopButton : styles.startButton,
+          startStopDisabled && styles.disabledButton,
         ]}
         onPress={handleStartStop}
+        disabled={startStopDisabled}
       >
         <Text style={styles.buttonEmoji}>
           {isRecording ? '⏹' : '🎙'}
         </Text>
         <Text style={styles.buttonText}>
-          {isRecording ? '结束' : '开始'}
+          {isTogglingRecording ? (isRecording ? '停止中...' : '启动中...') : isRecording ? '结束' : '开始'}
         </Text>
       </TouchableOpacity>
 
       {/* Save button */}
       <TouchableOpacity
-        style={[styles.button, styles.saveButton]}
+        style={[styles.button, styles.saveButton, isSaving && styles.disabledButton]}
         onPress={handleSave}
-        disabled={isSaving}
+        disabled={isSaving || isTogglingRecording}
       >
         <Text style={styles.buttonEmoji}>💾</Text>
         <Text style={styles.buttonText}>
@@ -135,6 +149,7 @@ export function ControlButtons() {
       <TouchableOpacity
         style={[styles.button, styles.historyButton]}
         onPress={handleHistory}
+        disabled={isTogglingRecording}
       >
         <Text style={styles.buttonEmoji}>📋</Text>
         <Text style={styles.buttonText}>历史</Text>
@@ -144,6 +159,7 @@ export function ControlButtons() {
       <TouchableOpacity
         style={[styles.button, styles.newButton]}
         onPress={handleNewSession}
+        disabled={isTogglingRecording}
       >
         <Text style={styles.buttonEmoji}>🔄</Text>
         <Text style={styles.buttonText}>新建</Text>
@@ -186,6 +202,9 @@ const styles = StyleSheet.create({
   },
   newButton: {
     backgroundColor: '#333',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   buttonEmoji: {
     fontSize: 16,

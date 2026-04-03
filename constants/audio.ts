@@ -2,9 +2,14 @@
  * Audio recording configuration constants
  */
 
-// Chunk duration in milliseconds
-// 5s gives best balance of accuracy vs latency (tested: 1s=20%, 3s=50%, 5s=65%+)
-export const CHUNK_DURATION_MS = 5000;
+const chunkDurationFromEnv = Number(process.env.EXPO_PUBLIC_CHUNK_DURATION_MS);
+
+// Chunk duration in milliseconds.
+// Default stays conservative for accuracy, but Phase 1 allows shorter client-driven chunks via env.
+export const CHUNK_DURATION_MS =
+  Number.isFinite(chunkDurationFromEnv) && chunkDurationFromEnv >= 1500 && chunkDurationFromEnv <= 5000
+    ? chunkDurationFromEnv
+    : 5000;
 
 // Minimum audio file size in bytes — below this is empty/silent, skip sending
 export const MIN_AUDIO_SIZE = 2048;
@@ -41,5 +46,22 @@ export const RECORDING_OPTIONS = {
 };
 
 // Sentence detection
-export const SENTENCE_END_REGEX = /[.!?]\s*$/;
-export const PAUSE_THRESHOLD_MS = 800; // Silence > 0.8s = sentence boundary
+export const SENTENCE_END_REGEX = /[.!?。！？]\s*$/;
+export const PAUSE_THRESHOLD_MS = 1000; // brief pause flush for unfinished sentence
+
+// Client-side quality guard before translation.
+export const MIN_TRANSLATABLE_TEXT_LENGTH = 3;
+export const LOW_SIGNAL_FILLERS = new Set([
+  'oh',
+  'ah',
+  'uh',
+  'um',
+  'huh',
+  'mm',
+  'hmm',
+  'erm',
+  'uhh',
+  'hmm.',
+  'oh.',
+  'ah.',
+]);

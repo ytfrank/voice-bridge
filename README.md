@@ -42,15 +42,24 @@ ZHIPU_API_KEY=your_key_here
 BFF_PORT=3001
 ```
 
-### 3. 启动 BFF 后端
+### 3. 按需启动本地服务（推荐）
 
 ```bash
-cd backend
-source venv/bin/activate  # 激活Python环境
-npm start
+npm run services:start
+npm run services:status
 ```
 
-**首次运行**会自动下载 Whisper tiny 模型 (~75MB)。
+这会：
+- 启动本地 BFF
+- 启动 Cloudflare tunnel
+- 自动更新 `.env` 里的 `EXPO_PUBLIC_BFF_URL`
+- 将日志写到 `logs/bff-dev.log` 和 `logs/cloudflared-dev.log`
+
+停止服务：
+
+```bash
+npm run services:stop
+```
 
 ### 4. 启动 Expo 开发服务器
 
