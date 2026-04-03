@@ -165,6 +165,30 @@
 - `silence_1s.wav` → 返回 `skipped: true` + `reason: empty_transcript` ✅
 - `musk_21s.wav` → 返回空文本，`reason: high_no_speech_prob`，不再透出 `You` ✅
 
+### 三次修复补充（服务版本错位根因）
+Guard 第二轮复测与我的本地自测不一致，最终定位到根因：
+
+- `3001` 端口上长期挂着**旧 BFF 进程**
+- 我修过的代码曾在其他测试端口/新进程上验证通过
+- 但 Guard 实际打到的仍是旧服务，所以表现为：
+  - `/health` 无 `whisperQueue`
+  - `/api/transcribe` 仍返回旧格式 `{"text":"You"}`
+
+### 本轮新增修复
+1. `backend/start.sh / stop.sh / status.sh`
+   - 从“只认 pid 文件”改为“按 3001 端口真实监听进程管理”
+   - 可自动清理旧监听者，避免假重启成功
+2. `/health`
+   - 新增 `buildCommit` 字段
+   - 便于 Guard 直接验证当前服务版本是否与提测 commit 一致
+
+### 三次修复定向验证
+- `/health.buildCommit == cc355f4` ✅
+- `/health.whisperQueue` 存在 ✅
+- 切掉旧 3001 服务后，用同一 `http://127.0.0.1:3001/api/transcribe` 复测：
+  - `silence_1s.wav` → 结构化空结果 ✅
+  - `musk_21s.wav` → 结构化拦截结果，不再透传 `You` ✅
+
 ## 七、已知风险 / 边界
 
 1. **质量门阈值是保守初始值**

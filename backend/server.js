@@ -31,6 +31,7 @@ const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
 const WHISPER_SCRIPT = path.join(__dirname, 'local_whisper.py');
+const BUILD_COMMIT = process.env.VOICE_BRIDGE_BUILD_COMMIT || 'cc355f4';
 
 // ===== Structured Logger =====
 const LOG_FILE = process.env.LOG_FILE || '/tmp/voice-bridge.log';
@@ -943,6 +944,7 @@ app.get('/health', async (req, res) => {
     expoGoUrl: resolved.value,
     expoSource: resolved.source,
     whisperQueue: whisperPool.getStats(),
+    buildCommit: BUILD_COMMIT,
   });
 });
 
