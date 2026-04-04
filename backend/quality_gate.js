@@ -11,6 +11,35 @@ const LOW_VALUE_TOKENS = new Set([
   'yo', 'yeah', 'yep', 'nope', 'you',
 ]);
 
+const ARTICLE_TOKENS = new Set(['a', 'an', 'the']);
+const VERB_HINT_TOKENS = new Set([
+  'am', 'are', 'is', 'was', 'were', 'be', 'been', 'being',
+  'do', 'does', 'did', 'done',
+  'have', 'has', 'had',
+  'can', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must',
+  'go', 'goes', 'went', 'gone',
+  'say', 'says', 'said',
+  'make', 'makes', 'made',
+  'take', 'takes', 'took',
+  'come', 'comes', 'came',
+  'get', 'gets', 'got',
+  'see', 'sees', 'saw',
+  'know', 'knows', 'knew',
+  'think', 'thinks', 'thought',
+  'look', 'looks', 'looked',
+  'feel', 'feels', 'felt',
+  'seem', 'seems', 'seemed',
+  'jump', 'jumps', 'jumped',
+  'sleep', 'sleeps', 'slept',
+  'talk', 'talks', 'talked',
+  'need', 'needs', 'needed',
+]);
+const FUNCTION_WORD_TOKENS = new Set([
+  'and', 'or', 'but', 'if', 'so', 'because', 'that', 'which', 'who',
+  'in', 'on', 'at', 'to', 'for', 'from', 'with', 'without', 'of', 'by', 'as',
+  'over', 'under', 'into', 'onto', 'about', 'after', 'before',
+]);
+
 function buildTextRepetitionStats(text = '') {
   const tokens = tokenizeEnglish(text);
   if (!tokens.length) {
@@ -53,13 +82,37 @@ function isLowValueUtterance(tokens = [], normalizedText = '') {
   return false;
 }
 
+function hasVerbSignal(tokens = []) {
+  return tokens.some((token, index) => {
+    if (VERB_HINT_TOKENS.has(token)) return true;
+    if (token.length >= 5 && /(ed|ing)$/.test(token)) return true;
+    if (index > 0 && token.length >= 5 && /s$/.test(token) && !/ss$/.test(token)) return true;
+    return false;
+  });
+}
+
+function isArticleLedContentFragment(tokens = [], normalizedText = '', durationSec = null) {
+  if (!tokens.length || durationSec === null) return false;
+  if (!ARTICLE_TOKENS.has(tokens[0])) return false;
+  if (tokens.length < 3 || tokens.length > 5) return false;
+  if (!/[.!?]$/.test(normalizedText || '')) return false;
+  if (durationSec > 3.2) return false;
+  if (hasVerbSignal(tokens)) return false;
+
+  const tailTokens = tokens.slice(1);
+  if (tailTokens.some((token) => FUNCTION_WORD_TOKENS.has(token))) return false;
+
+  return tailTokens.every((token) => /^[a-z]+(?:'[a-z]+)?$/.test(token) && token.length >= 3);
+}
+
 function isTruncatedShortPhrase(tokens = [], normalizedText = '', durationSec = null) {
   if (!tokens.length || durationSec === null) return false;
-  const startsWithArticle = ['a', 'an', 'the'].includes(tokens[0]);
+  const startsWithArticle = ARTICLE_TOKENS.has(tokens[0]);
   const shortAudio = durationSec <= 1.0;
   const shortPhrase = tokens.length <= 3;
   const looksSentenceFragment = /[.!?]$/.test(normalizedText || '');
-  return startsWithArticle && shortAudio && shortPhrase && looksSentenceFragment;
+  return (startsWithArticle && shortAudio && shortPhrase && looksSentenceFragment)
+    || isArticleLedContentFragment(tokens, normalizedText, durationSec);
 }
 
 function assessTextQuality(text = '', metadata = {}) {
@@ -112,6 +165,8 @@ function assessTextQuality(text = '', metadata = {}) {
       ...stats,
       charsPerSecond: charsPerSecond === null ? null : Number(charsPerSecond.toFixed(4)),
       isLowValueUtterance: isLowValueUtterance(tokens, normalizedText),
+      hasVerbSignal: hasVerbSignal(tokens),
+      isArticleLedContentFragment: isArticleLedContentFragment(tokens, normalizedText, durationSec),
       isTruncatedShortPhrase: isTruncatedShortPhrase(tokens, normalizedText, durationSec),
     },
     normalizedText,
@@ -143,6 +198,8 @@ module.exports = {
   tokenizeEnglish,
   buildTextRepetitionStats,
   isLowValueUtterance,
+  hasVerbSignal,
+  isArticleLedContentFragment,
   isTruncatedShortPhrase,
   assessTextQuality,
   buildAsrResponse,

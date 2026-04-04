@@ -16,6 +16,8 @@ from faster_whisper import WhisperModel
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "tiny")
 BEAM_SIZE = int(os.environ.get("WHISPER_BEAM_SIZE", "5"))
 MIN_RETRY_NO_VAD_DURATION_SEC = float(os.environ.get("WHISPER_MIN_RETRY_NO_VAD_DURATION_SEC", "0.8"))
+DEFAULT_VAD_FILTER = os.environ.get("WHISPER_VAD_FILTER", "true").lower() not in {"0", "false", "no"}
+CONDITION_ON_PREVIOUS_TEXT = os.environ.get("WHISPER_CONDITION_ON_PREVIOUS_TEXT", "false").lower() in {"1", "true", "yes"}
 
 _model = None
 
@@ -87,7 +89,12 @@ def segment_to_dict(segment) -> Dict[str, Any]:
     }
 
 
-def summarize_segments(segments_data: List[Dict[str, Any]], info, fallback_without_vad: bool) -> Dict[str, Any]:
+def summarize_segments(
+    segments_data: List[Dict[str, Any]],
+    info,
+    fallback_without_vad: bool,
+    transcribe_config: Dict[str, Any],
+) -> Dict[str, Any]:
     text = " ".join(item["text"] for item in segments_data if item.get("text")).strip()
     duration_sec = safe_float(getattr(info, "duration", None))
     duration_after_vad_sec = safe_float(getattr(info, "duration_after_vad", None))
@@ -162,6 +169,7 @@ def summarize_segments(segments_data: List[Dict[str, Any]], info, fallback_witho
             "maxRepeatedRun": repetition["maxRepeatedRun"],
             "repeatedBigramRatio": repetition["repeatedBigramRatio"],
             "fallbackWithoutVad": fallback_without_vad,
+            "transcribeConfig": transcribe_config,
             "qualityFlags": quality_flags,
             "qualityScore": quality_score,
             "emptyReason": empty_reason,
@@ -176,7 +184,7 @@ def run_transcribe(model, audio_path: str, vad_filter: bool):
         language="en",
         beam_size=BEAM_SIZE,
         vad_filter=vad_filter,
-        condition_on_previous_text=False,
+        condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
         temperature=0,
     )
     segments_data = [segment_to_dict(segment) for segment in segments]
@@ -186,17 +194,32 @@ def run_transcribe(model, audio_path: str, vad_filter: bool):
 def transcribe(audio_path: str) -> Dict[str, Any]:
     try:
         model = get_model()
-        segments_data, info = run_transcribe(model, audio_path, vad_filter=True)
+        initial_vad_filter = DEFAULT_VAD_FILTER
+        segments_data, info = run_transcribe(model, audio_path, vad_filter=initial_vad_filter)
         fallback_without_vad = False
 
         duration_sec = safe_float(getattr(info, "duration", None))
-        if not any(item.get("text") for item in segments_data) and (duration_sec or 0) >= MIN_RETRY_NO_VAD_DURATION_SEC:
+        if (
+            initial_vad_filter
+            and not any(item.get("text") for item in segments_data)
+            and (duration_sec or 0) >= MIN_RETRY_NO_VAD_DURATION_SEC
+        ):
             retry_segments_data, retry_info = run_transcribe(model, audio_path, vad_filter=False)
             if any(item.get("text") for item in retry_segments_data):
                 segments_data, info = retry_segments_data, retry_info
                 fallback_without_vad = True
 
-        summary = summarize_segments(segments_data, info, fallback_without_vad)
+        summary = summarize_segments(
+            segments_data,
+            info,
+            fallback_without_vad,
+            {
+                "model": MODEL_SIZE,
+                "beamSize": BEAM_SIZE,
+                "vadFilter": initial_vad_filter and not fallback_without_vad,
+                "conditionOnPreviousText": CONDITION_ON_PREVIOUS_TEXT,
+            },
+        )
         return {
             "success": True,
             "text": summary["text"],
