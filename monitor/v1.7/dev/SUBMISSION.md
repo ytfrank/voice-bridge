@@ -3,7 +3,7 @@
 **提交人**: Peter  
 **提交时间**: 2026-04-04  
 **分支**: dev_v1.6  
-**commit**: 284c113  
+**commit**: 待更新（见最新提交）  
 **状态**: 提测
 
 ---
@@ -164,6 +164,28 @@
 - `npm run services:status` ✅
 - `silence_1s.wav` → 返回 `skipped: true` + `reason: empty_transcript` ✅
 - `musk_21s.wav` → 返回空文本，`reason: high_no_speech_prob`，不再透出 `You` ✅
+
+### 四次修复补充（face_medium 幻觉主因）
+针对 Guard 第三轮指出的主因样本：
+- `face_medium.aiff`（ground truth: `The quick brown fox jumps over the lazy dog.`）
+- 当前 Whisper medium 实际稳定返回：`The quick brown.` / `a quick brown.`
+
+定位结论：
+- 这不是归一化/VAD额外造成的截断
+- 直接跑 `local_whisper.py` 对原始音频与归一化音频，结果都稳定为 3-token 截断短语
+- 因此继续调 `no_speech_prob` 阈值无效，必须补**截断短句代理规则**
+
+本轮新增规则：
+- `truncated_short_phrase`
+- 触发条件：
+  - 音频时长 `<= 1.0s`
+  - token 数 `<= 3`
+  - 以 `a/an/the` 开头
+  - 文本表现为被句号/感叹号/问号收尾的短截断短语
+
+定向验证：
+- `face_medium.aiff` → `{"text":"","skipped":true,"reason":"truncated_short_phrase"...}` ✅
+- `face_short.aiff` → 正常放行 `Hello how are you today?` ✅
 
 ### 三次修复补充（服务版本错位根因）
 Guard 第二轮复测与我的本地自测不一致，最终定位到根因：

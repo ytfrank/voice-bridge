@@ -815,6 +815,15 @@ function isLowValueUtterance(tokens = [], normalizedText = '') {
   return false;
 }
 
+function isTruncatedShortPhrase(tokens = [], normalizedText = '', durationSec = null) {
+  if (!tokens.length || durationSec === null) return false;
+  const startsWithArticle = ['a', 'an', 'the'].includes(tokens[0]);
+  const shortAudio = durationSec <= 1.0;
+  const shortPhrase = tokens.length <= 3;
+  const looksSentenceFragment = /[.!?]$/.test(normalizedText || '');
+  return startsWithArticle && shortAudio && shortPhrase && looksSentenceFragment;
+}
+
 function buildTextRepetitionStats(text = '') {
   const tokens = tokenizeEnglish(text);
   if (!tokens.length) {
@@ -882,6 +891,7 @@ function assessTextQuality(text = '', metadata = {}) {
   if (charsPerSecond !== null && charsPerSecond > 22) reasons.push('text_audio_mismatch');
   if (durationSec !== null && durationSec >= 0.8 && stats.tokenCount <= 1) reasons.push('too_little_text_for_audio');
   if (isLowValueUtterance(tokens, normalizedText)) reasons.push('low_value_text');
+  if (isTruncatedShortPhrase(tokens, normalizedText, durationSec)) reasons.push('truncated_short_phrase');
 
   const uniqueReasons = [...new Set(reasons.filter(Boolean))];
   const allowed = uniqueReasons.length === 0;
@@ -894,6 +904,7 @@ function assessTextQuality(text = '', metadata = {}) {
       ...stats,
       charsPerSecond: charsPerSecond === null ? null : Number(charsPerSecond.toFixed(4)),
       isLowValueUtterance: isLowValueUtterance(tokens, normalizedText),
+      isTruncatedShortPhrase: isTruncatedShortPhrase(tokens, normalizedText, durationSec),
     },
     normalizedText,
   };
