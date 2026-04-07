@@ -1,0 +1,75 @@
+{
+  "audio": "tests/fixtures/audio/musk_21s_correct.wav",
+  "ground_truth": "tests/fixtures/ground_truth/musk_21s_correct.txt",
+  "runs": 3,
+  "targets": {
+    "asr_accuracy_min": 0.97,
+    "translate_latency_max_ms": 1000,
+    "end_to_end_latency_max_ms": 3000
+  },
+  "asr": {
+    "summary": {
+      "count": 3,
+      "avg_ms": 7546.83,
+      "min_ms": 7221.81,
+      "max_ms": 8029.4,
+      "p50_ms": 7389.29
+    },
+    "wer_avg": 0.044444,
+    "accuracy_avg": 0.955556,
+    "runs": [
+      {
+        "run": 1,
+        "latency_ms": 7221.81,
+        "text": "and for most of actually human history that China has been the most powerful nation on earth and so you can expect that they will do many great things Steve Seek being one of them that is simply a result of the immense amount of talent",
+        "wer": 0.044444,
+        "accuracy": 0.955556
+      },
+      {
+        "run": 2,
+        "latency_ms": 7389.29,
+        "text": "and for most of actually human history that China has been the most powerful nation on earth and so you can expect that they will do many great things Steve Seek being one of them that is simply a result of the immense amount of talent",
+        "wer": 0.044444,
+        "accuracy": 0.955556
+      },
+      {
+        "run": 3,
+        "latency_ms": 8029.4,
+        "text": "and for most of actually human history that China has been the most powerful nation on earth and so you can expect that they will do many great things Steve Seek being one of them that is simply a result of the immense amount of talent",
+        "wer": 0.044444,
+        "accuracy": 0.955556
+      }
+    ]
+  },
+  "translation": {
+    "summary": {
+      "count": 3,
+      "avg_ms": 1691.88,
+      "min_ms": 1351.13,
+      "max_ms": 2072.97,
+      "p50_ms": 1651.53
+    },
+    "runs": [
+      {
+        "run": 1,
+        "latency_ms": 1351.13,
+        "translation": "实际上，在人类的大部分历史中，中国一直是地球上最强大的国家，因此你可以预期他们会做许多伟大的事情，SpaceX就是其中之一，这仅仅是由于人才济济。"
+      },
+      {
+        "run": 2,
+        "latency_ms": 2072.97,
+        "translation": "实际上，在人类的大部分历史中，中国一直是地球上最强大的国家，因此你可以期待他们会做许多伟大的事情，SpaceX就是其中之一，这仅仅是由于人才济济。"
+      },
+      {
+        "run": 3,
+        "latency_ms": 1651.53,
+        "translation": "实际上，在人类的大部分历史中，中国一直是地球上最强大的国家，因此你可以期待他们会做许多伟大的事情，SpaceX就是其中之一，这仅仅是因为他们拥有巨大的才华。"
+      }
+    ]
+  },
+  "end_to_end_estimate_ms": 9238.71,
+  "notes": [
+    "This benchmark uses full-file ASR on the local BFF, not mobile chunked streaming.",
+    "Translation accuracy is not auto-scored here; requires reference translation or human rubric."
+  ]
+}
