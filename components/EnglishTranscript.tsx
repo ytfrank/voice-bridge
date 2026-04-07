@@ -8,7 +8,7 @@ import { useTranscriptStore } from '../store/transcriptStore';
 
 export function EnglishTranscript() {
   const scrollRef = useRef<ScrollView>(null);
-  const { transcriptLines, currentTranscript, isRecording } =
+  const { transcriptLines, currentTranscript, isRecording, skipNotification } =
     useTranscriptStore();
 
   // Auto-scroll to bottom
@@ -49,6 +49,9 @@ export function EnglishTranscript() {
                 {currentTranscript}
                 <Text style={styles.cursor}>|</Text>
               </Text>
+            ) : null}
+            {skipNotification ? (
+              <Text style={styles.skipNotice}>{skipNotification}</Text>
             ) : null}
           </>
         )}
@@ -108,5 +111,12 @@ const styles = StyleSheet.create({
   cursor: {
     color: '#4fc3f7',
     opacity: 0.6,
+  },
+  skipNotice: {
+    color: '#888',
+    fontSize: 14,
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginBottom: 6,
   },
 });

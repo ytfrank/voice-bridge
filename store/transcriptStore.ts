@@ -65,6 +65,11 @@ interface TranscriptState {
   selectedWord: VocabularyWord | null;
   setSelectedWord: (w: VocabularyWord | null) => void;
 
+  // Skip notification (auto-cleared after display)
+  skipNotification: string | null;
+  showSkipNotification: (msg: string) => void;
+  clearSkipNotification: () => void;
+
   // Reset
   reset: () => void;
 }
@@ -120,6 +125,13 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
   selectedWord: null,
   setSelectedWord: (w) => set({ selectedWord: w }),
 
+  skipNotification: null,
+  showSkipNotification: (msg) => {
+    set({ skipNotification: msg });
+    setTimeout(() => set({ skipNotification: null }), 2500);
+  },
+  clearSkipNotification: () => set({ skipNotification: null }),
+
   reset: () =>
     set({
       isRecording: false,
@@ -133,5 +145,6 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       allWords: [],
       isVocabExpanded: false,
       selectedWord: null,
+      skipNotification: null,
     }),
 }));

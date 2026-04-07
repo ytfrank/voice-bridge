@@ -90,8 +90,9 @@ export function DebugPanel() {
                   styles.logLine,
                   line.includes('❌') || line.includes('🚨') ? styles.errorLine : null,
                   line.includes('✅') ? styles.successLine : null,
+                  line.includes('"skipped":true') || line.includes('chunk_skipped') ? styles.skipLine : null,
                 ]}>
-                  {line}
+                  {line.includes('"skipped":true') || line.includes('chunk_skipped') ? `[SKIP] ${line}` : line}
                 </Text>
               ))
             )}
@@ -170,5 +171,9 @@ const styles = StyleSheet.create({
   },
   successLine: {
     color: '#6f6',
+  },
+  skipLine: {
+    color: '#999',
+    opacity: 0.8,
   },
 });

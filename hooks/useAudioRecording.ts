@@ -315,6 +315,12 @@ export function useAudioRecording() {
       const text = normalizeTranscriptionText(result.text || '');
 
       if (!text) {
+        // Show skip notification if backend explicitly skipped
+        if (result.skipped) {
+          const { showSkipNotification } = useTranscriptStore.getState();
+          const reasonText = result.reason || '音频被跳过';
+          showSkipNotification(`[${reasonText}]`);
+        }
         analytics.track(
           'asr_result',
           {
