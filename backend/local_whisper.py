@@ -107,25 +107,9 @@ def summarize_segments(
     repetition = build_repetition_metrics(text)
     non_space_chars = len(re.sub(r"\s+", "", text))
     chars_per_second = round(non_space_chars / duration_sec, 4) if duration_sec and duration_sec > 0 else None
-    quality_flags: List[str] = []
 
-    if not text:
-        quality_flags.append("empty_text")
-    if language_probability is not None and language_probability < 0.45:
-        quality_flags.append("language_uncertain")
-    if avg_logprobs and sum(avg_logprobs) / len(avg_logprobs) < -1.1:
-        quality_flags.append("low_logprob")
-    if no_speech_probs and max(no_speech_probs) > 0.7:
-        quality_flags.append("high_no_speech_prob")
-    if repetition["maxRepeatedRun"] >= 4 or repetition["repeatedBigramRatio"] >= 0.35:
-        quality_flags.append("repetitive_text")
-    if chars_per_second is not None and chars_per_second > 22:
-        quality_flags.append("text_too_dense_for_audio")
-    if duration_sec is not None and duration_sec >= 2.0 and repetition["tokenCount"] <= 1:
-        quality_flags.append("too_little_text_for_duration")
-    if fallback_without_vad:
-        quality_flags.append("fallback_without_vad")
-
+    # Quality judgment is handled by quality_gate.js (single source of truth).
+    # Python only outputs raw metrics; do NOT add quality flags/scores here.
     empty_reason = None
     if not text:
         if duration_sec is not None and duration_sec < 0.35:
@@ -134,20 +118,6 @@ def summarize_segments(
             empty_reason = "no_speech"
         else:
             empty_reason = "empty_transcript"
-
-    quality_score = 1.0
-    penalties = {
-        "language_uncertain": 0.15,
-        "low_logprob": 0.25,
-        "high_no_speech_prob": 0.15,
-        "repetitive_text": 0.25,
-        "text_too_dense_for_audio": 0.15,
-        "too_little_text_for_duration": 0.15,
-        "empty_text": 0.4,
-    }
-    for flag in quality_flags:
-        quality_score -= penalties.get(flag, 0.0)
-    quality_score = round(max(0.0, min(1.0, quality_score)), 4)
 
     return {
         "text": text,
@@ -170,8 +140,6 @@ def summarize_segments(
             "repeatedBigramRatio": repetition["repeatedBigramRatio"],
             "fallbackWithoutVad": fallback_without_vad,
             "transcribeConfig": transcribe_config,
-            "qualityFlags": quality_flags,
-            "qualityScore": quality_score,
             "emptyReason": empty_reason,
             "segments": segments_data,
         },
@@ -233,7 +201,6 @@ def transcribe(audio_path: str) -> Dict[str, Any]:
             "error": str(exc),
             "metadata": {
                 "emptyReason": "transcription_failure",
-                "qualityFlags": ["transcription_failure"],
             },
         }
 

@@ -116,6 +116,9 @@ function isTruncatedShortPhrase(tokens = [], normalizedText = '', durationSec = 
 }
 
 function assessTextQuality(text = '', metadata = {}) {
+  // Shallow copy to avoid mutating the caller's object (B1 fix)
+  metadata = { ...metadata };
+
   const normalizedText = normalizeText(text);
   const tokens = tokenizeEnglish(normalizedText);
   const stats = buildTextRepetitionStats(normalizedText);

@@ -32,7 +32,18 @@ const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
 const WHISPER_SCRIPT = path.join(__dirname, 'local_whisper.py');
-const BUILD_COMMIT = process.env.VOICE_BRIDGE_BUILD_COMMIT || 'cc355f4';
+
+// Build commit: env var → git → warn
+let BUILD_COMMIT = process.env.VOICE_BRIDGE_BUILD_COMMIT;
+if (!BUILD_COMMIT) {
+  try {
+    const { execSync } = require('child_process');
+    BUILD_COMMIT = execSync('git rev-parse --short HEAD', { cwd: __dirname, encoding: 'utf8' }).trim();
+  } catch {
+    BUILD_COMMIT = 'unknown';
+    console.warn('⚠️  [Server] BUILD_COMMIT: unable to detect git commit hash. Set VOICE_BRIDGE_BUILD_COMMIT env var to avoid version mismatch.');
+  }
+}
 
 // ===== Structured Logger =====
 const LOG_FILE = process.env.LOG_FILE || '/tmp/voice-bridge.log';
