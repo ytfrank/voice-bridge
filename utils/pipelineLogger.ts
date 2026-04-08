@@ -23,6 +23,11 @@ export type PipelineEvent =
   | 'asr_530_retry'
   | 'watchdog_trigger'
   | 'app_background'
+  | 'debug_file_start'
+  | 'debug_file_error'
+  | 'debug_file_skipped'
+  | 'debug_file_transcribed'
+  | 'debug_file_done'
   | 'audio_resumed_from_background'
   | 'env_info'
   | 'error';

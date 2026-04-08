@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { pipelineLogger, PipelineLog } from '../utils/pipelineLogger';
 import { API } from '../constants/api';
+import { useAudioFileInput } from '../hooks/useAudioFileInput';
 
 const MAX_VISIBLE = 20;
 
@@ -17,6 +18,7 @@ export function DebugPanel() {
   const scrollRef = useRef<ScrollView>(null);
   const tapCountRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { isProcessing, progress, lastResult, pickAndProcess } = useAudioFileInput();
 
   // Triple-tap to toggle
   const handleTap = useCallback(() => {
@@ -73,10 +75,27 @@ export function DebugPanel() {
           <View style={styles.header}>
             <Text style={styles.headerText}>🐛 Debug</Text>
             <Text style={styles.envText}>{envInfo}</Text>
+            <TouchableOpacity
+              style={[styles.fileButton, isProcessing && styles.fileButtonDisabled]}
+              onPress={pickAndProcess}
+              disabled={isProcessing}
+            >
+              <Text style={styles.fileButtonText}>
+                {isProcessing ? '⏳' : '📁'}
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => { setLogs([]); pipelineLogger.reset(); }}>
               <Text style={styles.clearText}>Clear</Text>
             </TouchableOpacity>
           </View>
+          {/* File processing status */}
+          {(isProcessing || lastResult) && (
+            <View style={styles.statusBar}>
+              <Text style={styles.statusText}>
+                {isProcessing ? progress : lastResult}
+              </Text>
+            </View>
+          )}
           <ScrollView
             ref={scrollRef}
             style={styles.logArea}
@@ -154,6 +173,31 @@ const styles = StyleSheet.create({
   clearText: {
     color: '#f66',
     fontSize: 12,
+  },
+  fileButton: {
+    backgroundColor: '#2d6a4f',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginLeft: 8,
+  },
+  fileButtonDisabled: {
+    opacity: 0.5,
+  },
+  fileButtonText: {
+    fontSize: 14,
+  },
+  statusBar: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(45, 106, 79, 0.3)',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  statusText: {
+    color: '#6f6',
+    fontSize: 11,
+    fontFamily: 'monospace',
   },
   logArea: {
     flex: 1,
