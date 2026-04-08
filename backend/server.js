@@ -1442,6 +1442,114 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// ===== Debug: file transcription endpoint (for automated testing) =====
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/debug/transcribe-file', upload.single('audio'), async (req, res) => {
+    const t0 = Date.now();
+    let audioPath = null;
+    let normalizedPath = null;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No audio file provided' });
+      }
+
+      audioPath = req.file.path;
+      normalizedPath = `${audioPath}_normalized.wav`;
+      let processPath = audioPath;
+
+      const fileName = req.file.originalname || 'unknown';
+      const fileSize = req.file.size;
+
+      log('info', 'DEBUG-FILE', 'Processing audio file', { fileName, fileSize });
+
+      // Normalize audio
+      try {
+        await normalizeAudio(audioPath, normalizedPath);
+        processPath = normalizedPath;
+      } catch (normErr) {
+        log('warn', 'DEBUG-FILE', 'Normalization failed, using original', { error: normErr.message });
+      }
+
+      // Whisper transcription
+      const whisperT0 = Date.now();
+      const result = await whisperPool.process(processPath, { requestId: `debug_${Date.now()}` }, { fileSize });
+      const whisperMs = Date.now() - whisperT0;
+
+      const transcribedText = result.success ? (result.text || '').trim() : '';
+
+      if (!transcribedText) {
+        const totalMs = Date.now() - t0;
+        return res.json({
+          success: false,
+          fileName,
+          fileSize,
+          transcribedText: '',
+          translation: '',
+          whisperMs,
+          totalMs,
+          skipped: true,
+          reason: result.error || 'empty_transcription',
+        });
+      }
+
+      // Translation via GLM
+      const translateT0 = Date.now();
+      let translation = '';
+      let translateMs = 0;
+      try {
+        if (ZHIPU_API_KEY) {
+          const translateRes = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${ZHIPU_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'glm-4-flash',
+              messages: [{
+                role: 'system',
+                content: 'You are a professional English-to-Chinese translator. Translate the following English text to Chinese. Return ONLY the Chinese translation, nothing else. Keep the tone natural.',
+              }, {
+                role: 'user',
+                content: transcribedText,
+              }],
+              temperature: 0.1,
+            }),
+          });
+          const translateData = await translateRes.json();
+          translation = translateData.choices?.[0]?.message?.content || '';
+          translateMs = Date.now() - translateT0;
+        }
+      } catch (translateErr) {
+        log('warn', 'DEBUG-FILE', 'Translation failed', { error: translateErr.message });
+        translateMs = Date.now() - translateT0;
+      }
+
+      const totalMs = Date.now() - t0;
+      log('info', 'DEBUG-FILE', 'Complete', { fileName, totalMs, whisperMs, translateMs, textLen: transcribedText.length });
+
+      return res.json({
+        success: true,
+        fileName,
+        fileSize,
+        transcribedText,
+        translation,
+        whisperMs,
+        translateMs,
+        totalMs,
+        skipped: false,
+      });
+    } catch (err) {
+      log('error', 'DEBUG-FILE', 'Error', { error: err.message });
+      return res.status(500).json({ error: err.message, totalMs: Date.now() - t0 });
+    } finally {
+      if (normalizedPath && normalizedPath !== audioPath) safeUnlink(normalizedPath);
+      safeUnlink(audioPath);
+    }
+  });
+}
+
 // ===== Global exception handlers =====
 process.on('uncaughtException', (err) => {
   log('error', 'FATAL', 'Uncaught exception', { error: err.message, stack: err.stack });
