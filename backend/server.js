@@ -717,58 +717,159 @@ app.get('/api/meta/expo-link', async (req, res) => {
 });
 
 // ===== Zhipu ASR API =====
-async function zhipuAsr(audioPath, trace) {
-  const FormData = require('form-data');
-  const form = new FormData();
-  form.append('model', 'glm-asr-2512');
-  form.append('stream', 'false');
-  form.append('file', fs.createReadStream(audioPath));
-
+// ===== Zhipu ASR single-chunk call =====
+async function zhipuAsrSingle(audioPath, trace) {
+  const { execFile } = require('child_process');
   const t0 = Date.now();
-  try {
-    const resp = await fetch('https://open.bigmodel.cn/api/paas/v4/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${ZHIPU_API_KEY}`,
-        ...form.getHeaders(),
-      },
-      body: form,
-      timeout: 60000,
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-s', '--request', 'POST',
+      '--url', 'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions',
+      '--header', `Authorization: Bearer ${ZHIPU_API_KEY}`,
+      '--form', 'model=glm-asr-2512',
+      '--form', 'stream=false',
+      '--form', `file=@${audioPath}`,
+    ];
+
+    execFile('curl', args, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const elapsed = Date.now() - t0;
+      if (err) {
+        reject(new Error(`curl failed: ${err.message}`));
+        return;
+      }
+      try {
+        const data = JSON.parse(stdout);
+        if (data.error) {
+          reject(new Error(data.error.message || JSON.stringify(data.error)));
+          return;
+        }
+        resolve({ text: (data.text || '').trim(), elapsed, usage: data.usage });
+      } catch (e) {
+        reject(new Error(`parse error: ${stdout.substring(0, 200)}`));
+      }
     });
+  });
+}
 
-    const data = await resp.json();
-    const elapsed = Date.now() - t0;
+// ===== Zhipu ASR with chunking for files > 25s =====
+const ZHIPU_ASR_MAX_SEC = 25;
 
-    if (!resp.ok) {
-      log('error', 'ASR', `Zhipu ASR HTTP ${resp.status}`, {
+async function zhipuAsr(audioPath, trace) {
+  const t0 = Date.now();
+
+  try {
+    // Probe audio duration
+    const probe = await probeAudio(audioPath);
+    const durationSec = probe?.durationSec || 0;
+
+    // Short file: single API call
+    if (durationSec <= ZHIPU_ASR_MAX_SEC || durationSec === 0) {
+      const result = await zhipuAsrSingle(audioPath, trace);
+      const text = result.text;
+
+      log('info', 'ASR', `Zhipu ASR done (${result.elapsed}ms)`, {
         requestId: trace.requestId,
-        step: 'zhipu_asr_error',
-        duration: elapsed,
-        error: data.error || data,
+        step: 'zhipu_asr_done',
+        duration: result.elapsed,
+        textLen: text.length,
+        text: text.substring(0, 80),
+        usage: result.usage,
       });
-      return { success: false, error: data.error?.message || `HTTP ${resp.status}`, text: '' };
+
+      return {
+        success: text.length > 0,
+        text,
+        metadata: { provider: 'zhipu', asrMs: result.elapsed, usage: result.usage, chunks: 1 },
+      };
     }
 
-    const text = (data.text || '').trim();
-    log('info', 'ASR', `Zhipu ASR done (${elapsed}ms)`, {
+    // Long file: split into ≤25s chunks, process in parallel (max 2 concurrent)
+    const chunkCount = Math.ceil(durationSec / ZHIPU_ASR_MAX_SEC);
+    log('info', 'ASR', `Long audio (${durationSec.toFixed(1)}s), splitting into ${chunkCount} chunks`, {
       requestId: trace.requestId,
-      step: 'zhipu_asr_done',
-      duration: elapsed,
-      textLen: text.length,
-      text: text.substring(0, 80),
-      usage: data.usage,
+      step: 'zhipu_asr_chunk_start',
+      durationSec,
+      chunkCount,
+    });
+
+    // Split audio into chunk files using ffmpeg
+    const chunkDir = `${audioPath}_chunks`;
+    fs.mkdirSync(chunkDir, { recursive: true });
+
+    await new Promise((resolve, reject) => {
+      const ffmpeg = spawn('ffmpeg', [
+        '-i', audioPath,
+        '-f', 'segment',
+        '-segment_time', String(ZHIPU_ASR_MAX_SEC),
+        '-ar', '16000',
+        '-ac', '1',
+        '-acodec', 'pcm_s16le',
+        `${chunkDir}/chunk_%03d.wav`,
+      ]);
+      let stderr = '';
+      ffmpeg.stderr.on('data', (d) => stderr += d);
+      ffmpeg.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg segment failed: ${stderr.slice(-200)}`)));
+      ffmpeg.on('error', reject);
+    });
+
+    // List chunk files sorted
+    const chunkFiles = fs.readdirSync(chunkDir)
+      .filter(f => f.endsWith('.wav'))
+      .sort()
+      .map(f => `${chunkDir}/${f}`);
+
+    if (chunkFiles.length === 0) {
+      throw new Error('No audio chunks produced');
+    }
+
+    log('info', 'ASR', `Produced ${chunkFiles.length} chunks, processing...`, {
+      requestId: trace.requestId,
+      step: 'zhipu_asr_chunks_ready',
+      chunks: chunkFiles.length,
+    });
+
+    // Process chunks with concurrency limit of 2
+    const texts = [];
+    for (let i = 0; i < chunkFiles.length; i += 2) {
+      const batch = chunkFiles.slice(i, i + 2);
+      const results = await Promise.all(
+        batch.map((cf, idx) =>
+          zhipuAsrSingle(cf, { requestId: `${trace.requestId}_chunk${i + idx}` })
+            .catch(err => ({ text: '', elapsed: 0, error: err.message }))
+        )
+      );
+      for (const r of results) {
+        if (r.text) texts.push(r.text);
+      }
+    }
+
+    // Cleanup chunk files
+    for (const cf of chunkFiles) safeUnlink(cf);
+    try { fs.rmdirSync(chunkDir); } catch {}
+
+    const fullText = texts.join(' ').trim();
+    const totalMs = Date.now() - t0;
+
+    log('info', 'ASR', `Zhipu ASR chunked done (${totalMs}ms, ${chunkFiles.length} chunks)`, {
+      requestId: trace.requestId,
+      step: 'zhipu_asr_chunk_done',
+      duration: totalMs,
+      textLen: fullText.length,
+      text: fullText.substring(0, 80),
+      chunks: chunkFiles.length,
     });
 
     return {
-      success: text.length > 0,
-      text,
-      metadata: { provider: 'zhipu', asrMs: elapsed, usage: data.usage },
+      success: fullText.length > 0,
+      text: fullText,
+      metadata: { provider: 'zhipu', asrMs: totalMs, chunks: chunkFiles.length },
     };
   } catch (err) {
     const elapsed = Date.now() - t0;
-    log('error', 'ASR', `Zhipu ASR exception`, {
+    log('error', 'ASR', `Zhipu ASR error`, {
       requestId: trace.requestId,
-      step: 'zhipu_asr_exception',
+      step: 'zhipu_asr_error',
       duration: elapsed,
       error: err.message,
     });
@@ -875,7 +976,7 @@ async function normalizeAudio(inputPath, outputPath) {
     setTimeout(() => {
       try { ffmpeg.kill('SIGKILL'); } catch {}
       finish(new Error('ffmpeg timeout'));
-    }, 15000);
+    }, 60000);
   });
 }
 
