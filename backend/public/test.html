@@ -3,594 +3,168 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Voice Bridge - 测试工具</title>
+<title>VoiceBridge 测试页面</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
-.container { max-width: 800px; margin: 0 auto; padding: 16px; }
-h1 { font-size: 20px; color: #fff; margin-bottom: 4px; }
-.subtitle { font-size: 12px; color: #666; margin-bottom: 16px; }
-.status-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-.status-pill { padding: 4px 10px; border-radius: 12px; font-size: 11px; background: #1a1a1a; border: 1px solid #333; }
-.status-pill.ok { border-color: #2d5a2d; color: #6f6; }
-.status-pill.err { border-color: #5a2d2d; color: #f66; }
-.status-pill.loading { border-color: #5a5a2d; color: #ff6; }
-
-/* Upload area */
-.upload-area { border: 2px dashed #333; border-radius: 12px; padding: 32px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 16px; }
-.upload-area:hover, .upload-area.dragover { border-color: #4a9eff; background: rgba(74,158,255,0.05); }
-.upload-area input { display: none; }
-.upload-icon { font-size: 36px; margin-bottom: 8px; }
-.upload-text { font-size: 14px; color: #888; }
-.upload-hint { font-size: 11px; color: #555; margin-top: 4px; }
-
-/* File info */
-.file-info { background: #1a1a1a; border-radius: 8px; padding: 12px; margin-bottom: 16px; display: none; }
-.file-info.show { display: block; }
-.file-name { font-size: 13px; color: #4a9eff; font-weight: 500; }
-.file-meta { font-size: 11px; color: #666; margin-top: 2px; }
-
-/* Controls */
-.controls { display: flex; gap: 8px; margin-bottom: 16px; }
-.btn { padding: 10px 20px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-primary { background: #4a9eff; color: #fff; }
-.btn-primary:hover:not(:disabled) { background: #3a8eef; }
-.btn-danger { background: #ff4a4a; color: #fff; }
-.btn-secondary { background: #333; color: #ccc; }
-.btn-secondary:hover:not(:disabled) { background: #444; }
-
-/* Progress */
-.progress-area { margin-bottom: 16px; display: none; }
-.progress-area.show { display: block; }
-.progress-bar-bg { height: 6px; background: #1a1a1a; border-radius: 3px; overflow: hidden; }
-.progress-bar { height: 100%; background: #4a9eff; border-radius: 3px; transition: width 0.3s; width: 0%; }
-.progress-text { font-size: 11px; color: #888; margin-top: 4px; display: flex; justify-content: space-between; }
-
-/* Results */
-.result-section { margin-bottom: 16px; }
-.result-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-.result-box { background: #111; border: 1px solid #222; border-radius: 8px; padding: 12px; min-height: 60px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-.result-box.english { color: #e0e0e0; }
-.result-box.chinese { color: #4a9eff; }
-.result-box.empty { color: #444; font-style: italic; }
-
-/* Performance */
-.perf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 16px; }
-.perf-card { background: #1a1a1a; border-radius: 8px; padding: 10px; text-align: center; }
-.perf-value { font-size: 20px; font-weight: 700; color: #fff; }
-.perf-label { font-size: 10px; color: #666; margin-top: 2px; }
-
-/* Log */
-.log-area { background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 8px; padding: 8px; max-height: 200px; overflow-y: auto; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.5; }
-.log-line { color: #666; }
-.log-line.info { color: #888; }
-.log-line.success { color: #6f6; }
-.log-line.error { color: #f66; }
-.log-line.warn { color: #ff6; }
-
-/* Chunk mode */
-.mode-toggle { display: flex; gap: 0; margin-bottom: 16px; border-radius: 8px; overflow: hidden; border: 1px solid #333; }
-.mode-btn { flex: 1; padding: 8px; text-align: center; font-size: 12px; cursor: pointer; background: #1a1a1a; color: #888; border: none; transition: all 0.2s; }
-.mode-btn.active { background: #4a9eff; color: #fff; }
-
-/* Chunk settings */
-.settings { background: #1a1a1a; border-radius: 8px; padding: 12px; margin-bottom: 16px; display: none; }
-.settings.show { display: block; }
-.setting-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.setting-label { font-size: 12px; color: #888; }
-.setting-input { width: 80px; padding: 4px 8px; background: #111; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 12px; text-align: right; }
+body { font-family: system-ui; background: #0f172a; color: #e2e8f0; padding: 20px; max-width: 800px; margin: 0 auto; }
+h1 { margin-bottom: 20px; font-size: 22px; }
+h2 { margin: 20px 0 10px; font-size: 16px; color: #94a3b8; }
+.section { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
+label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 6px; }
+input[type=file], select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; margin-bottom: 12px; }
+button { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+button:hover { background: #1d4ed8; }
+button:disabled { background: #475569; cursor: not-allowed; }
+.result { background: #0f172a; border-radius: 8px; padding: 16px; margin-top: 12px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; min-height: 60px; border: 1px solid #334155; }
+.timing { color: #6ee7b7; font-weight: 600; }
+.error { color: #fca5a5; }
+.success { color: #6ee7b7; }
+.status { font-size: 13px; margin-top: 8px; }
+#mic-section { display: none; }
+.recording { animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>🎙️ Voice Bridge 测试工具</h1>
-  <p class="subtitle">上传音频 → ASR识别 → 翻译 | BFF: <span id="bffUrl">检测中...</span></p>
+<h1>🎙️ VoiceBridge 测试页面</h1>
+<p style="color:#94a3b8;margin-bottom:20px;font-size:13px">用于自动化测试，绕过 Expo Go。直接调用 BFF API。</p>
 
-  <!-- Status -->
-  <div class="status-bar" id="statusBar">
-    <span class="status-pill loading" id="statusBff">BFF: 检测中</span>
-    <span class="status-pill" id="statusWhisper">Whisper: --</span>
-    <span class="status-pill" id="statusTunnel">隧道: --</span>
-  </div>
+<div class="section">
+  <h2>📁 文件测试（支持任意时长音频）</h2>
+  <label>选择音频文件（WAV/MP3/M4A/MP4）</label>
+  <input type="file" id="audioFile" accept="audio/*,video/mp4">
+  <button id="btnFile" onclick="testFile()">开始识别 + 翻译</button>
+  <div class="status" id="fileStatus"></div>
+  <div class="result" id="fileResult">等待测试...</div>
+</div>
 
-  <!-- Mode toggle -->
-  <div class="mode-toggle">
-    <button class="mode-btn active" onclick="setMode('full')" id="modeFullBtn">整段处理</button>
-    <button class="mode-btn" onclick="setMode('chunk')" id="modeChunkBtn">分段模拟 (5s chunks)</button>
-  </div>
+<div class="section">
+  <h2>🎤 麦克风实时录音测试</h2>
+  <button id="btnMic" onclick="toggleMic()">🎙️ 开始录音</button>
+  <span id="micTimer" style="margin-left:12px;color:#94a3b8"></span>
+  <div class="status" id="micStatus"></div>
+  <div class="result" id="micResult">等待录音...</div>
+</div>
 
-  <!-- Chunk settings -->
-  <div class="settings" id="chunkSettings">
-    <div class="setting-row">
-      <span class="setting-label">Chunk 时长 (秒)</span>
-      <input type="number" class="setting-input" id="chunkDuration" value="5" min="1" max="30">
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">Chunk 间隔 (ms)</span>
-      <input type="number" class="setting-input" id="chunkDelay" value="200" min="0" max="5000">
-    </div>
-  </div>
-
-  <!-- Upload -->
-  <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
-    <div class="upload-icon">📁</div>
-    <div class="upload-text">点击或拖拽上传音频文件</div>
-    <div class="upload-hint">支持 .mp3 .wav .m4a .mov .mp4 .webm .ogg | 最大 100MB</div>
-    <input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg,.mov,.mp4">
-  </div>
-
-  <!-- File info -->
-  <div class="file-info" id="fileInfo">
-    <div class="file-name" id="fileName"></div>
-    <div class="file-meta" id="fileMeta"></div>
-  </div>
-
-  <!-- Controls -->
-  <div class="controls">
-    <button class="btn btn-primary" id="btnStart" disabled onclick="startProcessing()">▶ 开始处理</button>
-    <button class="btn btn-danger" id="btnStop" disabled onclick="stopProcessing()">■ 停止</button>
-    <button class="btn btn-secondary" onclick="clearAll()">🗑 清空</button>
-  </div>
-
-  <!-- Progress -->
-  <div class="progress-area" id="progressArea">
-    <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
-    <div class="progress-text">
-      <span id="progressLabel">处理中...</span>
-      <span id="progressPct">0%</span>
-    </div>
-  </div>
-
-  <!-- Performance -->
-  <div class="perf-grid" id="perfGrid">
-    <div class="perf-card"><div class="perf-value" id="perfAsrTime">--</div><div class="perf-label">ASR 总耗时</div></div>
-    <div class="perf-card"><div class="perf-value" id="perfTransTime">--</div><div class="perf-label">翻译总耗时</div></div>
-    <div class="perf-card"><div class="perf-value" id="perfChunks">--</div><div class="perf-label">处理段数</div></div>
-    <div class="perf-card"><div class="perf-value" id="perfTotal">--</div><div class="perf-label">端到端耗时</div></div>
-  </div>
-
-  <!-- Results -->
-  <div class="result-section">
-    <div class="result-label">🇬🇧 英文识别结果</div>
-    <div class="result-box english empty" id="resultEnglish">等待上传音频...</div>
-  </div>
-
-  <div class="result-section">
-    <div class="result-label">🇨🇳 中文翻译结果</div>
-    <div class="result-box chinese empty" id="resultChinese">等待翻译...</div>
-  </div>
-
-  <!-- Log -->
-  <div class="result-section">
-    <div class="result-label">📋 处理日志</div>
-    <div class="log-area" id="logArea"></div>
-  </div>
+<div class="section">
+  <h2>🏥 BFF 健康检查</h2>
+  <button onclick="healthCheck()">检查</button>
+  <div class="result" id="healthResult">等待检查...</div>
 </div>
 
 <script>
-// === Config ===
-const BFF_LOCAL = 'http://localhost:3001';
-let BFF_URL = BFF_LOCAL;
-let mode = 'full'; // full | chunk
-let processing = false;
-let abortController = null;
+const BFF = window.location.origin;
 
-// === Init ===
-window.addEventListener('DOMContentLoaded', async () => {
-  await checkBff();
-});
-
-// === BFF Health ===
-async function checkBff() {
-  const el = document.getElementById('statusBff');
-  const whisperEl = document.getElementById('statusWhisper');
-  const urlEl = document.getElementById('bffUrl');
+// ── File test ──
+async function testFile() {
+  const file = document.getElementById('audioFile').files[0];
+  if (!file) { alert('请先选择文件'); return; }
   
-  try {
-    const res = await fetch(BFF_LOCAL + '/health', { signal: AbortSignal.timeout(5000) });
-    const data = await res.json();
-    el.textContent = 'BFF: ✅ OK';
-    el.className = 'status-pill ok';
-    whisperEl.textContent = `Whisper: ${data.whisper} (${data.whisperWorkers}w)`;
-    whisperEl.className = 'status-pill ok';
-    urlEl.textContent = BFF_LOCAL;
-    log('info', `BFF 连接成功: ${data.whisper} 模型, ${data.whisperWorkers} workers`);
-  } catch {
-    el.textContent = 'BFF: ❌ 离线';
-    el.className = 'status-pill err';
-    urlEl.textContent = '离线';
-    log('error', 'BFF 连接失败 - 请确认 BFF 在 localhost:3001 运行');
-  }
-
-  // Check tunnel
-  checkTunnel();
-}
-
-async function checkTunnel() {
-  const el = document.getElementById('statusTunnel');
-  try {
-    // Try to detect tunnel URL from page URL or env
-    const envRes = await fetch(BFF_LOCAL + '/health');
-    if (envRes.ok) {
-      el.textContent = '本地: ✅';
-      el.className = 'status-pill ok';
-    }
-  } catch {
-    el.textContent = '隧道: ❌';
-    el.className = 'status-pill err';
-  }
-}
-
-// === File handling ===
-const uploadArea = document.getElementById('uploadArea');
-const fileInput = document.getElementById('fileInput');
-
-uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
-uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
-uploadArea.addEventListener('drop', (e) => {
-  e.preventDefault();
-  uploadArea.classList.remove('dragover');
-  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-});
-fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
-
-let currentFile = null;
-let audioDuration = 0;
-
-function handleFile(file) {
-  currentFile = file;
-  const sizeMB = (file.size / 1048576).toFixed(1);
-  document.getElementById('fileName').textContent = file.name;
-  document.getElementById('fileInput').value = '';
+  const btn = document.getElementById('btnFile');
+  const status = document.getElementById('fileStatus');
+  const result = document.getElementById('fileResult');
   
-  // Get audio duration
-  const audio = new Audio();
-  audio.src = URL.createObjectURL(file);
-  audio.addEventListener('loadedmetadata', () => {
-    audioDuration = audio.duration;
-    document.getElementById('fileMeta').textContent = 
-      `${sizeMB} MB | ${formatTime(audioDuration)} | ${file.type || 'audio'}`;
-    URL.revokeObjectURL(audio.src);
-  });
-  audio.addEventListener('error', () => {
-    document.getElementById('fileMeta').textContent = `${sizeMB} MB | ${file.type || 'audio'}`;
-  });
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+  status.innerHTML = `上传中: ${file.name} (${(file.size/1024).toFixed(0)}KB)`;
   
-  document.getElementById('fileInfo').classList.add('show');
-  document.getElementById('btnStart').disabled = false;
-  log('info', `已选择文件: ${file.name} (${sizeMB} MB)`);
-}
-
-// === Mode ===
-function setMode(m) {
-  mode = m;
-  document.getElementById('modeFullBtn').classList.toggle('active', m === 'full');
-  document.getElementById('modeChunkBtn').classList.toggle('active', m === 'chunk');
-  document.getElementById('chunkSettings').classList.toggle('show', m === 'chunk');
-}
-
-// === Processing ===
-async function startProcessing() {
-  if (!currentFile) return;
-  processing = true;
-  abortController = new AbortController();
-  
-  document.getElementById('btnStart').disabled = true;
-  document.getElementById('btnStop').disabled = false;
-  document.getElementById('progressArea').classList.add('show');
-  document.getElementById('resultEnglish').textContent = '';
-  document.getElementById('resultEnglish').classList.remove('empty');
-  document.getElementById('resultChinese').textContent = '';
-  document.getElementById('resultChinese').classList.remove('empty');
-
-  const t0 = performance.now();
-  
-  try {
-    if (mode === 'full') {
-      await processFullAudio(t0);
-    } else {
-      await processChunkedAudio(t0);
-    }
-  } catch (err) {
-    if (err.name !== 'AbortError') {
-      log('error', `处理失败: ${err.message}`);
-    }
-  }
-
-  processing = false;
-  document.getElementById('btnStart').disabled = false;
-  document.getElementById('btnStop').disabled = true;
-  
-  const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
-  document.getElementById('perfTotal').textContent = totalTime + 's';
-  log('success', `处理完成, 端到端耗时: ${totalTime}s`);
-}
-
-// === Full audio processing ===
-async function processFullAudio(t0) {
-  setProgress(10, 'ASR 识别中...');
-  log('info', '开始整段 ASR 识别...');
-  
-  const asrT0 = performance.now();
   const formData = new FormData();
-  formData.append('audio', currentFile);
+  formData.append('audio', file);
   
-  const asrRes = await fetch(BFF_URL + '/api/transcribe', {
-    method: 'POST',
-    body: formData,
-    signal: abortController.signal,
-  });
-  
-  if (!asrRes.ok) {
-    const errText = await asrRes.text();
-    throw new Error(`ASR 失败 (HTTP ${asrRes.status}): ${errText}`);
-  }
-  
-  const asrData = await asrRes.json();
-  const asrTime = ((performance.now() - asrT0) / 1000).toFixed(1);
-  document.getElementById('perfAsrTime').textContent = asrTime + 's';
-  document.getElementById('perfChunks').textContent = '1';
-  
-  const englishText = asrData.text || '';
-  document.getElementById('resultEnglish').textContent = englishText;
-  log('success', `ASR 完成 (${asrTime}s): "${englishText.substring(0, 60)}..."`);
-  
-  if (!englishText.trim()) {
-    log('warn', 'ASR 返回空文本，跳过翻译');
-    setProgress(100, '完成（无识别结果）');
-    return;
-  }
-  
-  // Translate
-  setProgress(60, '翻译中...');
-  log('info', '开始翻译...');
-  
-  const transT0 = performance.now();
-  const transRes = await fetch(BFF_URL + '/api/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: englishText }),
-    signal: abortController.signal,
-  });
-  
-  if (!transRes.ok) {
-    const errText = await transRes.text();
-    throw new Error(`翻译失败 (HTTP ${transRes.status}): ${errText}`);
-  }
-  
-  const transData = await transRes.json();
-  const transTime = ((performance.now() - transT0) / 1000).toFixed(1);
-  document.getElementById('perfTransTime').textContent = transTime + 's';
-  
-  document.getElementById('resultChinese').textContent = transData.translation || '(无翻译)';
-  log('success', `翻译完成 (${transTime}s): "${(transData.translation || '').substring(0, 60)}"`);
-  
-  setProgress(100, '完成');
-}
-
-// === Chunked audio processing ===
-async function processChunkedAudio(t0) {
-  const chunkSec = parseInt(document.getElementById('chunkDuration').value) || 5;
-  const chunkDelay = parseInt(document.getElementById('chunkDelay').value) || 200;
-  
-  log('info', `分段模式: ${chunkSec}s chunks, ${chunkDelay}ms 间隔`);
-  
-  // Split audio into chunks using Web Audio API
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const arrayBuffer = await currentFile.arrayBuffer();
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  
-  const sampleRate = audioBuffer.sampleRate;
-  const totalSamples = audioBuffer.length;
-  const chunkSamples = chunkSec * sampleRate;
-  const numChunks = Math.ceil(totalSamples / chunkSamples);
-  
-  log('info', `音频: ${(audioBuffer.duration).toFixed(1)}s, ${sampleRate}Hz, ${numChunks} chunks`);
-  
-  let allEnglish = '';
-  let totalAsrTime = 0;
-  let processedChunks = 0;
-  
-  for (let i = 0; i < numChunks; i++) {
-    if (!processing) break;
-    
-    const start = i * chunkSamples;
-    const end = Math.min(start + chunkSamples, totalSamples);
-    const chunkLen = end - start;
-    
-    // Create chunk buffer
-    const chunkBuffer = audioContext.createBuffer(
-      audioBuffer.numberOfChannels,
-      chunkLen,
-      sampleRate
-    );
-    for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
-      const sourceData = audioBuffer.getChannelData(ch);
-      const chunkData = chunkBuffer.getChannelData(ch);
-      for (let s = 0; s < chunkLen; s++) {
-        chunkData[s] = sourceData[start + s];
-      }
-    }
-    
-    // Encode chunk to WAV
-    const wavBlob = encodeWav(chunkBuffer);
-    
-    setProgress(
-      Math.round(((i + 0.5) / numChunks) * 80),
-      `ASR chunk ${i + 1}/${numChunks}...`
-    );
-    
-    const chunkT0 = performance.now();
-    const formData = new FormData();
-    formData.append('audio', wavBlob, `chunk_${i}.wav`);
-    
-    try {
-      const res = await fetch(BFF_URL + '/api/transcribe', {
-        method: 'POST',
-        body: formData,
-        signal: abortController.signal,
-      });
-      
-      if (!res.ok) {
-        log('error', `Chunk ${i + 1} ASR 失败: HTTP ${res.status}`);
-        continue;
-      }
-      
-      const data = await res.json();
-      const chunkTime = ((performance.now() - chunkT0) / 1000).toFixed(1);
-      totalAsrTime += (performance.now() - chunkT0) / 1000;
-      processedChunks++;
-      
-      const chunkText = data.text || '';
-      if (chunkText.trim()) {
-        allEnglish += (allEnglish ? ' ' : '') + chunkText;
-        document.getElementById('resultEnglish').textContent = allEnglish;
-        log('success', `Chunk ${i + 1}/${numChunks} (${chunkTime}s): "${chunkText.substring(0, 50)}"`);
-      } else {
-        log('warn', `Chunk ${i + 1}/${numChunks} (${chunkTime}s): (静音/空)`);
-      }
-    } catch (err) {
-      if (err.name === 'AbortError') throw err;
-      log('error', `Chunk ${i + 1} 异常: ${err.message}`);
-    }
-    
-    // Inter-chunk delay
-    if (chunkDelay > 0 && i < numChunks - 1) {
-      await new Promise(r => setTimeout(r, chunkDelay));
-    }
-  }
-  
-  document.getElementById('perfAsrTime').textContent = totalAsrTime.toFixed(1) + 's';
-  document.getElementById('perfChunks').textContent = processedChunks.toString();
-  
-  if (!allEnglish.trim()) {
-    log('warn', '所有 chunks 均无识别结果');
-    setProgress(100, '完成（无结果）');
-    return;
-  }
-  
-  // Translate combined text
-  setProgress(85, '翻译中...');
-  log('info', `开始翻译合并文本 (${allEnglish.length} chars)...`);
-  
-  const transT0 = performance.now();
+  const t0 = performance.now();
   try {
-    const transRes = await fetch(BFF_URL + '/api/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: allEnglish }),
-      signal: abortController.signal,
-    });
+    const resp = await fetch(`${BFF}/api/debug/transcribe-file`, { method: 'POST', body: formData });
+    const data = await resp.json();
+    const total = ((performance.now() - t0) / 1000).toFixed(1);
     
-    if (transRes.ok) {
-      const transData = await transRes.json();
-      const transTime = ((performance.now() - transT0) / 1000).toFixed(1);
-      document.getElementById('perfTransTime').textContent = transTime + 's';
-      document.getElementById('resultChinese').textContent = transData.translation || '(无翻译)';
-      log('success', `翻译完成 (${transTime}s)`);
+    if (data.success) {
+      status.innerHTML = `<span class="success">✅ 成功</span> | 总耗时: <span class="timing">${total}s</span> | ASR: ${data.whisperMs}ms | 翻译: ${data.translateMs}ms`;
+      result.innerHTML = `【英文原文】\n${data.transcribedText}\n\n【中文翻译】\n${data.translation}`;
     } else {
-      log('error', `翻译失败: HTTP ${transRes.status}`);
+      status.innerHTML = `<span class="error">❌ 失败</span> | ${data.reason || 'unknown'}`;
+      result.innerHTML = JSON.stringify(data, null, 2);
     }
-  } catch (err) {
-    if (err.name === 'AbortError') throw err;
-    log('error', `翻译异常: ${err.message}`);
+  } catch(e) {
+    status.innerHTML = `<span class="error">❌ 网络错误: ${e.message}</span>`;
+    result.innerHTML = '';
   }
   
-  setProgress(100, '完成');
-  audioContext.close();
+  btn.disabled = false;
+  btn.textContent = '开始识别 + 翻译';
 }
 
-// === WAV encoder ===
-function encodeWav(audioBuffer) {
-  const numChannels = 1; // Mono
-  const sampleRate = audioBuffer.sampleRate;
-  const format = 1; // PCM
-  const bitsPerSample = 16;
+// ── Mic test ──
+let mediaRecorder = null;
+let micChunks = [];
+let micInterval = null;
+let micStart = 0;
+
+async function toggleMic() {
+  const btn = document.getElementById('btnMic');
   
-  // Mix to mono
-  const samples = audioBuffer.getChannelData(0);
-  const dataLength = samples.length * 2;
-  const buffer = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(buffer);
-  
-  // WAV header
-  writeStr(view, 0, 'RIFF');
-  view.setUint32(4, 36 + dataLength, true);
-  writeStr(view, 8, 'WAVE');
-  writeStr(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, format, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * bitsPerSample / 8, true);
-  view.setUint16(32, numChannels * bitsPerSample / 8, true);
-  view.setUint16(34, bitsPerSample, true);
-  writeStr(view, 36, 'data');
-  view.setUint32(40, dataLength, true);
-  
-  // PCM data
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    offset += 2;
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    btn.textContent = '🎙️ 开始录音';
+    btn.classList.remove('recording');
+    clearInterval(micInterval);
+    return;
   }
   
-  return new Blob([buffer], { type: 'audio/wav' });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    micChunks = [];
+    
+    mediaRecorder.ondataavailable = (e) => micChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(micChunks, { type: 'audio/webm' });
+      document.getElementById('micStatus').innerHTML = `录音完成 (${(blob.size/1024).toFixed(0)}KB)，处理中...`;
+      
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+      
+      const t0 = performance.now();
+      try {
+        const resp = await fetch(`${BFF}/api/debug/transcribe-file`, { method: 'POST', body: formData });
+        const data = await resp.json();
+        const total = ((performance.now() - t0) / 1000).toFixed(1);
+        
+        if (data.success) {
+          document.getElementById('micStatus').innerHTML = `<span class="success">✅ 成功</span> | 总耗时: <span class="timing">${total}s</span>`;
+          document.getElementById('micResult').innerHTML = `【英文原文】\n${data.transcribedText}\n\n【中文翻译】\n${data.translation}`;
+        } else {
+          document.getElementById('micStatus').innerHTML = `<span class="error">❌ 失败: ${data.reason}</span>`;
+        }
+      } catch(e) {
+        document.getElementById('micStatus').innerHTML = `<span class="error">❌ 网络错误</span>`;
+      }
+    };
+    
+    mediaRecorder.start();
+    micStart = Date.now();
+    btn.textContent = '⏹️ 停止录音';
+    btn.classList.add('recording');
+    
+    micInterval = setInterval(() => {
+      const sec = Math.floor((Date.now() - micStart) / 1000);
+      document.getElementById('micTimer').textContent = `${sec}s`;
+    }, 1000);
+    
+  } catch(e) {
+    alert('无法访问麦克风: ' + e.message);
+  }
 }
 
-function writeStr(view, offset, str) {
-  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-}
-
-// === Helpers ===
-function stopProcessing() {
-  processing = false;
-  if (abortController) abortController.abort();
-  log('warn', '处理已停止');
-  document.getElementById('btnStart').disabled = false;
-  document.getElementById('btnStop').disabled = true;
-}
-
-function clearAll() {
-  currentFile = null;
-  audioDuration = 0;
-  document.getElementById('fileInfo').classList.remove('show');
-  document.getElementById('progressArea').classList.remove('show');
-  document.getElementById('resultEnglish').textContent = '等待上传音频...';
-  document.getElementById('resultEnglish').classList.add('empty');
-  document.getElementById('resultChinese').textContent = '等待翻译...';
-  document.getElementById('resultChinese').classList.add('empty');
-  document.getElementById('btnStart').disabled = true;
-  document.getElementById('logArea').innerHTML = '';
-  ['perfAsrTime', 'perfTransTime', 'perfChunks', 'perfTotal'].forEach(id => {
-    document.getElementById(id).textContent = '--';
-  });
-  log('info', '已清空');
-}
-
-function setProgress(pct, label) {
-  document.getElementById('progressBar').style.width = pct + '%';
-  document.getElementById('progressPct').textContent = pct + '%';
-  if (label) document.getElementById('progressLabel').textContent = label;
-}
-
-function formatTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
-}
-
-function log(level, msg) {
-  const area = document.getElementById('logArea');
-  const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-  const icon = { info: 'ℹ️', success: '✅', error: '❌', warn: '⚠️' }[level] || '📋';
-  const line = document.createElement('div');
-  line.className = `log-line ${level}`;
-  line.textContent = `${time} ${icon} ${msg}`;
-  area.appendChild(line);
-  area.scrollTop = area.scrollHeight;
+// ── Health check ──
+async function healthCheck() {
+  try {
+    const resp = await fetch(`${BFF}/health`);
+    const data = await resp.json();
+    document.getElementById('healthResult').innerHTML = `<span class="success">✅ BFF Online</span>\n${JSON.stringify(data, null, 2)}`;
+  } catch(e) {
+    document.getElementById('healthResult').innerHTML = `<span class="error">❌ BFF Offline: ${e.message}</span>`;
+  }
 }
 </script>
 </body>
