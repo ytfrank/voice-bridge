@@ -28,6 +28,9 @@ const WHISPER_QUEUE_TTL_MS = parseInt(process.env.WHISPER_QUEUE_TTL_MS || '20000
 const WHISPER_MAX_QUEUE = parseInt(process.env.WHISPER_MAX_QUEUE || '24', 10);
 const MIN_AUDIO_BYTES = parseInt(process.env.MIN_AUDIO_BYTES || '512', 10);
 const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || '0.35');
+const ASR_PROVIDER = process.env.ASR_PROVIDER || 'zhipu'; // 'zhipu' or 'local'
+const ASR_PROVIDER_ZHIPU = 'zhipu';
+const ASR_PROVIDER_LOCAL = 'local';
 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
@@ -713,6 +716,75 @@ app.get('/api/meta/expo-link', async (req, res) => {
   });
 });
 
+// ===== Zhipu ASR API =====
+async function zhipuAsr(audioPath, trace) {
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('model', 'glm-asr-2512');
+  form.append('stream', 'false');
+  form.append('file', fs.createReadStream(audioPath));
+
+  const t0 = Date.now();
+  try {
+    const resp = await fetch('https://open.bigmodel.cn/api/paas/v4/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${ZHIPU_API_KEY}`,
+        ...form.getHeaders(),
+      },
+      body: form,
+      timeout: 60000,
+    });
+
+    const data = await resp.json();
+    const elapsed = Date.now() - t0;
+
+    if (!resp.ok) {
+      log('error', 'ASR', `Zhipu ASR HTTP ${resp.status}`, {
+        requestId: trace.requestId,
+        step: 'zhipu_asr_error',
+        duration: elapsed,
+        error: data.error || data,
+      });
+      return { success: false, error: data.error?.message || `HTTP ${resp.status}`, text: '' };
+    }
+
+    const text = (data.text || '').trim();
+    log('info', 'ASR', `Zhipu ASR done (${elapsed}ms)`, {
+      requestId: trace.requestId,
+      step: 'zhipu_asr_done',
+      duration: elapsed,
+      textLen: text.length,
+      text: text.substring(0, 80),
+      usage: data.usage,
+    });
+
+    return {
+      success: text.length > 0,
+      text,
+      metadata: { provider: 'zhipu', asrMs: elapsed, usage: data.usage },
+    };
+  } catch (err) {
+    const elapsed = Date.now() - t0;
+    log('error', 'ASR', `Zhipu ASR exception`, {
+      requestId: trace.requestId,
+      step: 'zhipu_asr_exception',
+      duration: elapsed,
+      error: err.message,
+    });
+    return { success: false, error: err.message, text: '' };
+  }
+}
+
+// ===== Unified ASR dispatch =====
+async function dispatchAsr(audioPath, trace, opts = {}) {
+  if (ASR_PROVIDER === ASR_PROVIDER_ZHIPU) {
+    return zhipuAsr(audioPath, trace);
+  }
+  // Fallback: local whisper
+  return whisperPool.process(audioPath, trace, opts);
+}
+
 function safeUnlink(filePath) {
   if (!filePath) return;
   fs.unlink(filePath, () => {});
@@ -947,7 +1019,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     const whisperT0 = Date.now();
     let result;
     try {
-      result = await whisperPool.process(processPath, trace, { fileSize: processStats.size });
+      result = await dispatchAsr(processPath, trace, { fileSize: processStats.size });
     } catch (workerErr) {
       const classified = classifyAsrError(workerErr);
       log(classified.status >= 500 ? 'error' : 'warn', 'ASR', classified.message, {
@@ -1473,7 +1545,7 @@ if (process.env.NODE_ENV !== 'production') {
 
       // Whisper transcription
       const whisperT0 = Date.now();
-      const result = await whisperPool.process(processPath, { requestId: `debug_${Date.now()}` }, { fileSize });
+      const result = await dispatchAsr(processPath, { requestId: `debug_${Date.now()}` }, { fileSize });
       const whisperMs = Date.now() - whisperT0;
 
       const transcribedText = result.success ? (result.text || '').trim() : '';
