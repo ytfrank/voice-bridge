@@ -1,129 +1,66 @@
-# 提测报告 — 线上确认跳转失败修复
+# 提测报告 - Debug模式：音频文件输入
 
-**提测时间**：2026-03-31 08:41  
-**提测人**：Peter  
-**分支**：feature/v1.5  
-**最新 Commit**：`431ca89`  
+## 基本信息
+- **commit**: b181756
+- **分支**: dev_v1.6
+- **日期**: 2026-04-08
 
----
+## 修改文件
 
-## 一、问题根因
+| 文件 | 改动类型 | 说明 |
+|------|---------|------|
+| `hooks/useAudioFileInput.ts` | 新增 | 音频文件选择+处理hook |
+| `components/DebugPanel.tsx` | 修改 | 增加📁文件输入按钮+进度显示 |
+| `utils/pipelineLogger.ts` | 修改 | 新增debug_file_*事件类型 |
+| `package.json` | 修改 | 新增expo-document-picker依赖 |
+| `tests/fixtures/audio/README.md` | 新增 | 测试音频命名规范和分类 |
 
-本次线上确认失败不是单点问题，而是链路上有 3 个问题叠加：
+## 功能说明
 
-1. **BFF 根路径 `/` 未实现**
-   - 公网域名直接指向 BFF 时，访问根路径会返回 `Cannot GET /`
-   - 导致 iPhone 浏览器点开后不是跳转页，而是错误页
+### 使用方式
+1. 三击右下角小圆点打开Debug面板
+2. 点击 📁 按钮
+3. 选择音频文件（支持 mp3/wav/m4a）
+4. 系统自动：上传转录 → 翻译 → 结果显示到主界面
 
-2. **Expo Go 跳转地址存在写死/过期风险**
-   - 旧跳转页里写的是历史 `exp://...` 地址
-   - Expo tunnel 变化后，旧地址会失效，导致无法稳定跳转
+### 处理流程
+```
+选择文件 → uploadAsync(/api/transcribe) → 拿到transcription → translateText() → addTranslation()
+```
 
-3. **公网 tunnel 需要重新校正**
-   - 线上确认依赖临时 Cloudflare Quick Tunnel
-   - 旧域名可能已失效或未指向当前运行中的修复版 BFF
+### 测试音频命名规范
+```
+{lang}_{duration}_{description}.{ext}
+```
+分类：短(3-15s)、中(1-5min)、长(30min+)、边界(silent/noise)
 
----
+## 改动点说明
 
-## 二、修复内容
+1. **不修改正常录音流程** — Debug功能完全在DebugPanel内，不影响正常用户体验
+2. **复用现有接口** — 直接调用已有的 `/api/transcribe` 和 `translateText()`，无需新后端端点
+3. **类型安全** — TypeScript编译零错误，所有类型严格对齐
 
-### 1. 后端补齐根路径跳转页
-- 文件：`backend/server.js`
-- 新增 `GET /`
-- 访问公网域名根路径时，返回跳转页面而不是 `Cannot GET /`
-- 页面包含：
-  - 自动跳转到 Expo Go
-  - 手动“打开 Expo Go”按钮
-  - 当前解析到的 Expo 地址和来源
+## 自测情况
+- ✅ TypeScript编译通过 (tsc --noEmit)
+- ✅ 代码已push到远程
 
-### 2. Expo Go 链接改为运行时动态解析
-- 文件：`backend/server.js`
-- 新增 Expo 地址解析逻辑：
-  - 优先读 `EXPO_GO_URL`
-  - 否则自动扫描本机 Expo 开发端口（8081/8082/19000/19006）
-  - 读取 Expo manifest，实时提取当前 `hostUri`
-  - 动态生成当前可用的 `exp://...` 地址
-- 这样可以避免使用过期的硬编码地址
+## 测试重点
 
-### 3. 新增调试接口
-- 文件：`backend/server.js`
-- 新增 `GET /api/meta/expo-link`
-- 用于检查当前解析出的 Expo Go 地址，便于线上排障和验收
+1. **功能测试**：选择不同格式音频文件（mp3/wav/m4a），验证转录+翻译正常
+2. **边界测试**：
+   - 极短音频（<1s）— 应该被quality gate跳过
+   - 静音文件 — 应返回空/skipped
+   - 大文件（>30min）— 验证不超时
+3. **UI测试**：Debug面板文件选择按钮交互、进度显示、结果展示
+4. **端到端测试**：用标准测试音频集验证准确率和延迟
 
-### 4. 健康检查补充链路状态
-- 文件：`backend/server.js`
-- `GET /health` 增加：
-  - `expoGoUrl`
-  - `expoSource`
-- 便于确认当前公网入口指向的版本是否正确
+## 注意事项
 
-### 5. 启动脚本增强
-- 文件：`scripts/start-dev.sh`
-- Cloudflare tunnel 启动时增加 `--no-tls-verify`
-- 启动完成后尝试自动打印当前 Expo Go URL
-- 减少“服务起来了，但外链不可确认”的排障成本
+- 需要 `npx expo install expo-document-picker` 后重启 Expo
+- 音频文件处理可能耗时较长（大文件），注意超时设置
+- 后端 whisper 默认超时 30s，超长音频可能需要调大 `WHISPER_TIMEOUT_MS`
 
----
+## 风险
 
-## 三、修改文件清单
-
-- `backend/server.js`
-- `scripts/start-dev.sh`
-- `SUBMISSION.md`
-
----
-
-## 四、自测结果
-
-### 本地自测
-- ✅ `http://127.0.0.1:3001/` 返回跳转页 HTML，不再报错
-- ✅ `http://127.0.0.1:3001/health` 返回 200
-- ✅ `http://127.0.0.1:3001/api/meta/expo-link?refresh=1` 返回当前 Expo 地址
-- ✅ 当前自动解析到的 Expo Go 地址：`exp://aswx_oy-ytfrank-8082.exp.direct`
-
-### 公网自测
-- ✅ 新公网域名已拉起：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
-- ✅ `GET /` 返回跳转页（HTTP 200）
-- ✅ `GET /health` 返回 200
-- ✅ `GET /api/meta/expo-link` 返回当前 Expo Go 地址
-
----
-
-## 五、Guard 测试重点
-
-请重点验证以下 4 点：
-
-1. **iPhone 浏览器打开公网域名根路径**
-   - 访问：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
-   - 预期：出现 VoiceBridge 跳转页，而不是 `Cannot GET /`
-
-2. **自动跳转是否生效**
-   - 预期：页面自动尝试跳转到 Expo Go
-
-3. **手动按钮兜底是否生效**
-   - 如果自动跳转失败，点击“打开 Expo Go”按钮可继续进入 Expo Go
-
-4. **链路状态接口是否正确**
-   - 访问：`https://wrapping-examined-flame-honolulu.trycloudflare.com/health`
-   - 预期：返回 200，且包含 `expoGoUrl`
-
----
-
-## 六、当前可用地址
-
-- 公网入口：`https://wrapping-examined-flame-honolulu.trycloudflare.com`
-- 健康检查：`https://wrapping-examined-flame-honolulu.trycloudflare.com/health`
-- Expo 地址查询：`https://wrapping-examined-flame-honolulu.trycloudflare.com/api/meta/expo-link`
-- 当前 Expo Go 地址：`exp://aswx_oy-ytfrank-8082.exp.direct`
-
----
-
-## 七、注意事项
-
-1. 当前公网域名仍然是 **Cloudflare Quick Tunnel 临时域名**，后续 tunnel 重建后域名会变化
-2. 本次已修复“根路径报错 + 跳转地址写死”两个核心问题；后续如果要彻底稳定线上确认链路，建议升级为 **Named Tunnel / 固定公网域名**
-3. Guard 开始测试后，我这边按规则冻结当前分支，不再继续 push
-
----
-
-*Peter · 2026-03-31*
+- expo-document-picker 在 iOS Simulator 上的文件选择体验可能受限（沙箱限制）
+- 超大音频文件（>1h）可能超过 whisper 处理能力，需要实测确认
