@@ -28,6 +28,10 @@
       "package": "com.voicebridge.app",
       "permissions": ["RECORD_AUDIO", "INTERNET"]
     },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
     "plugins": ["expo-router"],
     "experiments": {
       "typedRoutes": true
