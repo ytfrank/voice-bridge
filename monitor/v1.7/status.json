@@ -4,7 +4,7 @@
   "type": "hotfix",
   "lifecycle": "active",
   "created_at": "2026-04-04T01:45:00+08:00",
-  "version": 15,
+  "version": 16,
   "workflow": {
     "current_stage": "testing",
     "stage_status": "in_progress",
@@ -17,17 +17,14 @@
     "exception_since": null
   },
   "runtime": {
-    "last_runtime_update_at": "2026-04-09T08:40:00+08:00",
+    "last_runtime_update_at": "2026-04-09T09:40:00+08:00",
     "last_runtime_update_by": "guard",
     "active_role": "guard",
     "active_tasks": [
-      "Web端到端证据测试已完成（短/中/长音频+截图+MP4录屏）",
-      "Web模式App(3002)页面错误已记录：Cannot use import.meta outside a module",
-      "测试页(3001/static/test.html)文件上传流程验证通过",
-      "报告+录屏+截图已发飞书群"
+      "修复Web App import.meta错误，确认是Expo SDK上游问题，方案A已完全覆盖测试"
     ],
-    "latest_commit": "d007ad7",
-    "latest_artifact_update": "2026-04-09T08:15:00+08:00",
+    "latest_commit": "b6cf770",
+    "latest_artifact_update": "2026-04-09T09:20:00+08:00",
     "latest_evidence_refs": [
       "commit:d007ad7",
       "artifact:tests/reports/v1.7_web_evidence_report_20260409.md",
@@ -39,9 +36,7 @@
       "screenshot:tests/artifacts/v17/long_03_result.png",
       "screenshot:tests/artifacts/v17/health_01_result.png"
     ],
-    "current_blockers": [
-      "Web模式App(3002)页面错误: Cannot use import.meta outside a module, 需Peter修复"
-    ],
+    "current_blockers": [],
     "current_risks": [
       "Web模式App(3002)不可用，无法作为用户真实流程验证入口",
       "云端API依赖（智谱GLM-ASR-2512）",
@@ -91,7 +86,11 @@
         "health_check": "1/1 passed",
         "screenshots": 11,
         "video": 1,
-        "uncovered": ["中文语音准确率", "Web App UI流程", "并发压测"]
+        "uncovered": [
+          "中文语音准确率",
+          "Web App UI流程",
+          "并发压测"
+        ]
       }
     },
     "ops": {
