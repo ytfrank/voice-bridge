@@ -5,17 +5,21 @@
 const chunkDurationFromEnv = Number(process.env.EXPO_PUBLIC_CHUNK_DURATION_MS);
 
 // Chunk duration in milliseconds.
-// Default stays conservative for accuracy, but Phase 1 allows shorter client-driven chunks via env.
+// Default 2000ms for production real-time target; env configurable 1500~3000ms.
 export const CHUNK_DURATION_MS =
-  Number.isFinite(chunkDurationFromEnv) && chunkDurationFromEnv >= 1500 && chunkDurationFromEnv <= 5000
+  Number.isFinite(chunkDurationFromEnv) && chunkDurationFromEnv >= 1500 && chunkDurationFromEnv <= 3000
     ? chunkDurationFromEnv
-    : 5000;
+    : 2000;
 
 // Minimum audio file size in bytes — below this is empty/silent, skip sending
 export const MIN_AUDIO_SIZE = 2048;
 
 // Silence threshold in dB — below this is silence (expo-audio metering range: -160 to 0)
 export const SILENCE_THRESHOLD_DB = -50;
+
+// Client-side chunk gate: only skip when metering is available and the whole
+// chunk never rises above this peak. Keep aligned with backend low_signal gate.
+export const CLIENT_CHUNK_MIN_PEAK_DB = SILENCE_THRESHOLD_DB;
 
 // Recording options for expo-av (.m4a format)
 export const RECORDING_OPTIONS = {

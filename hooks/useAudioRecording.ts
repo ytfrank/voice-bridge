@@ -3,11 +3,12 @@
  * Phase 1: State machine + ordered queue + segment tracking + error recovery
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { useAudioRecorder, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
+import { useAudioRecorder, useAudioRecorderState, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
 import {
   CHUNK_DURATION_MS,
+  CLIENT_CHUNK_MIN_PEAK_DB,
   SENTENCE_END_REGEX,
   PAUSE_THRESHOLD_MS,
   MIN_TRANSLATABLE_TEXT_LENGTH,
@@ -29,6 +30,7 @@ const BACKGROUND_RECOVERY_DELAY_MS = 1500;
 
 // Recording options for expo-audio
 const recordingOptions: RecordingOptions = {
+  isMeteringEnabled: true,
   extension: '.m4a',
   sampleRate: 44100,
   numberOfChannels: 1,
@@ -86,6 +88,31 @@ function shouldSkipTranslation(text: string): { skip: boolean; reason?: string }
   return { skip: false };
 }
 
+function shouldSkipAsrResult(result: TranscriptionResult, text: string): { skip: boolean; reason: string } {
+  const decision = result.qualityDecision?.toUpperCase();
+  if (result.skipped) {
+    return { skip: true, reason: result.reason || result.reasons?.join(', ') || decision || 'backend_skipped' };
+  }
+
+  if (decision && decision !== 'PASS') {
+    return { skip: true, reason: result.reason || result.reasons?.join(', ') || decision };
+  }
+
+  if (!text) {
+    return { skip: true, reason: result.reason || 'empty_text' };
+  }
+
+  return { skip: false, reason: '' };
+}
+
+function shouldSkipClientChunk(peakMeteringDb: number | null): { skip: boolean; reason?: string } {
+  if (peakMeteringDb === null || !Number.isFinite(peakMeteringDb)) return { skip: false };
+  if (peakMeteringDb <= CLIENT_CHUNK_MIN_PEAK_DB) {
+    return { skip: true, reason: 'client_low_signal' };
+  }
+  return { skip: false };
+}
+
 async function configureRecordingAudioMode() {
   await setAudioModeAsync({
     allowsRecording: true,
@@ -97,6 +124,7 @@ async function configureRecordingAudioMode() {
 
 export function useAudioRecording() {
   const recorder = useAudioRecorder(recordingOptions);
+  const recorderState = useAudioRecorderState(recorder, 200);
   const cycleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const appStateSubscriptionRef = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
@@ -104,10 +132,12 @@ export function useAudioRecording() {
   const segmentIdsBufferRef = useRef<number[]>([]);
   const lastTextTimeRef = useRef<number>(0);
   const lastChunkTimeRef = useRef<number>(Date.now());
+  const lastTranscribeTimeRef = useRef<number>(0);
   const segmentCounterRef = useRef<number>(0);
   const isCycleRunningRef = useRef<boolean>(false);
   const stopRequestedRef = useRef<boolean>(false);
   const isStartStopBusyRef = useRef<boolean>(false);
+  const currentChunkPeakDbRef = useRef<number | null>(null);
 
   const stateMachineRef = useRef<RecordingStateMachine>(
     new RecordingStateMachine(3)
@@ -126,6 +156,12 @@ export function useAudioRecording() {
     setTranslating,
     clearCurrentTranscript,
   } = useTranscriptStore();
+
+  useEffect(() => {
+    const metering = recorderState.metering;
+    if (typeof metering !== 'number' || !Number.isFinite(metering)) return;
+    currentChunkPeakDbRef.current = Math.max(currentChunkPeakDbRef.current ?? metering, metering);
+  }, [recorderState.metering]);
 
   const clearCycleTimer = useCallback(() => {
     if (cycleTimeoutRef.current) {
@@ -155,7 +191,7 @@ export function useAudioRecording() {
    * Process a completed sentence - translate it
    */
   const processSentence = useCallback(
-    async (sentence: string, segmentIds: number[]) => {
+    async (sentence: string, segmentIds: number[], transcribeTime?: number) => {
       const normalizedSentence = normalizeTranscriptionText(sentence);
       if (!normalizedSentence) return;
 
@@ -213,6 +249,7 @@ export function useAudioRecording() {
         chineseTranslation: '',
         words: [],
         timestamp: Date.now(),
+        ...(transcribeTime !== undefined ? { transcribeTime } : {}),
       });
 
       try {
@@ -225,10 +262,12 @@ export function useAudioRecording() {
         );
 
         const translateTime = Date.now() - t0;
+        const totalLatency = (transcribeTime ?? 0) + translateTime;
 
         updateTranslation(id, {
           chineseTranslation: streamTranslation || '翻译失败',
           translateTime,
+          totalLatency,
         });
 
         analytics.track(
@@ -254,10 +293,12 @@ export function useAudioRecording() {
         console.error('Translation failed:', err);
         try {
           const result = await translateText(normalizedSentence, { requestId, sessionId, segmentIds });
+          const fallbackTranslateTime = Date.now() - t0;
           updateTranslation(id, {
             chineseTranslation: result.translation,
             words: result.words,
-            translateTime: Date.now() - t0,
+            translateTime: fallbackTranslateTime,
+            totalLatency: (transcribeTime ?? 0) + fallbackTranslateTime,
           });
           analytics.track(
             'translate_result',
@@ -312,24 +353,22 @@ export function useAudioRecording() {
         return;
       }
       const transcribeTime = Date.now() - t0;
+      lastTranscribeTimeRef.current = transcribeTime;
       const text = normalizeTranscriptionText(result.text || '');
+      const asrGuard = shouldSkipAsrResult(result, text);
 
-      if (!text) {
-        // Show skip notification if backend explicitly skipped
-        if (result.skipped) {
-          const { showSkipNotification } = useTranscriptStore.getState();
-          const reasonText = result.reason || '音频被跳过';
-          showSkipNotification(`[${reasonText}]`);
-        }
+      if (asrGuard.skip) {
+        // Skipped/blocked backend results must not enter subtitle or translation UI.
         analytics.track(
           'asr_result',
           {
             segmentId,
             latencyMs: transcribeTime,
             textLength: 0,
-            empty: true,
-            skipped: Boolean(result.skipped),
-            reason: result.reason || 'empty_text',
+            empty: !text,
+            skipped: true,
+            reason: asrGuard.reason,
+            qualityDecision: result.qualityDecision,
             status: result.status,
           },
           requestId
@@ -337,8 +376,9 @@ export function useAudioRecording() {
         pipelineLogger.log(segmentId, 'asr_empty', {
           transcribeTime,
           requestId,
-          skipped: Boolean(result.skipped),
-          reason: result.reason || 'empty_text',
+          skipped: true,
+          reason: asrGuard.reason,
+          qualityDecision: result.qualityDecision,
           status: result.status,
         });
         const sm = stateMachineRef.current;
@@ -357,6 +397,7 @@ export function useAudioRecording() {
           textPreview: text.substring(0, 120),
           skipped: Boolean(result.skipped),
           reason: result.reason,
+          qualityDecision: result.qualityDecision,
           status: result.status,
         },
         requestId
@@ -367,6 +408,7 @@ export function useAudioRecording() {
         requestId,
         skipped: Boolean(result.skipped),
         reason: result.reason,
+        qualityDecision: result.qualityDecision,
       });
 
       lastTextTimeRef.current = Date.now();
@@ -380,7 +422,7 @@ export function useAudioRecording() {
         sentenceBufferRef.current = '';
         segmentIdsBufferRef.current = [];
         clearCurrentTranscript();
-        void processSentence(sentence, segIds);
+        void processSentence(sentence, segIds, transcribeTime);
       } else {
         const sm = stateMachineRef.current;
         if (sm.isRecording()) {
@@ -414,6 +456,7 @@ export function useAudioRecording() {
         await recorder.prepareToRecordAsync(recordingOptions);
 
         if (!sm.transition(RecordingState.RECORDING)) return false;
+        currentChunkPeakDbRef.current = null;
         recorder.record();
 
         setPipelineStatus('listening');
@@ -448,7 +491,7 @@ export function useAudioRecording() {
         sentenceBufferRef.current = '';
         segmentIdsBufferRef.current = [];
         clearCurrentTranscript();
-        void processSentence(sentence, segIds);
+        void processSentence(sentence, segIds, lastTranscribeTimeRef.current || undefined);
       }
 
       if (!sm.transition(RecordingState.STOPPING)) return;
@@ -458,14 +501,27 @@ export function useAudioRecording() {
       if (uri) {
         lastChunkTimeRef.current = Date.now();
         const segId = nextSegmentId();
+        const peakMeteringDb = currentChunkPeakDbRef.current;
+        const clientGuard = shouldSkipClientChunk(peakMeteringDb);
         analytics.track('chunk_generated', {
           segmentId: segId,
           uriSuffix: uri.substring(uri.length - 30),
           chunkDurationMs: CHUNK_DURATION_MS,
+          peakMeteringDb,
+          skipped: clientGuard.skip,
+          reason: clientGuard.reason,
         });
-        pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30), chunkMs: CHUNK_DURATION_MS });
-        pipelineLogger.log(segId, 'queue_enqueue');
-        chunkQueueRef.current?.enqueue(segId, uri);
+        pipelineLogger.log(segId, 'chunk_recorded', {
+          uri: uri.substring(uri.length - 30),
+          chunkMs: CHUNK_DURATION_MS,
+          peakMeteringDb,
+        });
+        if (clientGuard.skip) {
+          pipelineLogger.log(segId, 'chunk_skipped', { reason: clientGuard.reason, peakMeteringDb });
+        } else {
+          pipelineLogger.log(segId, 'queue_enqueue');
+          chunkQueueRef.current?.enqueue(segId, uri);
+        }
       } else {
         pipelineLogger.log(-1, 'chunk_skipped', { reason: 'no_uri' });
       }
@@ -482,6 +538,7 @@ export function useAudioRecording() {
       await recorder.prepareToRecordAsync(recordingOptions);
 
       if (!sm.transition(RecordingState.RECORDING)) return;
+      currentChunkPeakDbRef.current = null;
       recorder.record();
       scheduleNextCycle();
     } catch (err) {
@@ -527,6 +584,7 @@ export function useAudioRecording() {
       sentenceBufferRef.current = '';
       segmentIdsBufferRef.current = [];
       lastTextTimeRef.current = Date.now();
+      lastTranscribeTimeRef.current = 0;
       pipelineLogger.reset();
       clearCurrentTranscript();
 
@@ -561,6 +619,7 @@ export function useAudioRecording() {
         throw new Error('Failed to transition to RECORDING');
       }
 
+      currentChunkPeakDbRef.current = null;
       recorder.record();
       setRecording(true);
       setSessionStartTime(Date.now());
@@ -680,9 +739,15 @@ export function useAudioRecording() {
 
         if (uri) {
           const segId = nextSegmentId();
-          pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30), final: true });
-          pipelineLogger.log(segId, 'queue_enqueue', { final: true });
-          chunkQueueRef.current?.enqueue(segId, uri);
+          const peakMeteringDb = currentChunkPeakDbRef.current;
+          const clientGuard = shouldSkipClientChunk(peakMeteringDb);
+          pipelineLogger.log(segId, 'chunk_recorded', { uri: uri.substring(uri.length - 30), final: true, peakMeteringDb });
+          if (clientGuard.skip) {
+            pipelineLogger.log(segId, 'chunk_skipped', { final: true, reason: clientGuard.reason, peakMeteringDb });
+          } else {
+            pipelineLogger.log(segId, 'queue_enqueue', { final: true });
+            chunkQueueRef.current?.enqueue(segId, uri);
+          }
         }
       }
 
@@ -692,7 +757,7 @@ export function useAudioRecording() {
         sentenceBufferRef.current = '';
         segmentIdsBufferRef.current = [];
         clearCurrentTranscript();
-        await processSentence(sentence, segIds);
+        await processSentence(sentence, segIds, lastTranscribeTimeRef.current || undefined);
       }
 
       sm.transition(RecordingState.IDLE);

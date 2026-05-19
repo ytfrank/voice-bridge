@@ -38,13 +38,16 @@ export function ChineseTranslation() {
           <Text style={styles.placeholder}>翻译将显示在这里</Text>
         ) : (
           <>
-            {translations.map((entry) => (
-              <View key={entry.id} style={styles.entryContainer}>
-                <Text style={styles.translationText}>
-                  {entry.chineseTranslation}
-                </Text>
-              </View>
-            ))}
+            {translations.map((entry) => {
+              const isPending = !entry.chineseTranslation;
+              return (
+                <View key={entry.id} style={styles.entryContainer}>
+                  <Text style={isPending ? styles.pendingText : styles.translationText}>
+                    {isPending ? '翻译中...' : entry.chineseTranslation}
+                  </Text>
+                </View>
+              );
+            })}
           </>
         )}
 
@@ -94,6 +97,12 @@ const styles = StyleSheet.create({
     color: '#ffd93d',
     fontSize: 18,
     lineHeight: 28,
+  },
+  pendingText: {
+    color: '#888',
+    fontSize: 16,
+    lineHeight: 26,
+    fontStyle: 'italic',
   },
   loadingContainer: {
     flexDirection: 'row',

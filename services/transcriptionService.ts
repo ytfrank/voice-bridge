@@ -23,6 +23,7 @@ export interface TranscriptionResult {
   skipped?: boolean;
   reason?: string;
   reasons?: string[];
+  qualityDecision?: string;
   status: number;
 }
 
@@ -84,6 +85,7 @@ export async function transcribeAudio(
         const skipped = Boolean(data.skipped);
         const reason = typeof data.reason === 'string' ? data.reason : undefined;
         const reasons = Array.isArray(data.reasons) ? data.reasons : undefined;
+        const qualityDecision = typeof data.qualityDecision === 'string' ? data.qualityDecision : undefined;
 
         pipelineLogger.log(segmentId ?? -1, text ? 'asr_done' : 'asr_empty', {
           ms: uploadMs,
@@ -92,6 +94,7 @@ export async function transcribeAudio(
           skipped,
           reason: reason || (reasons ? reasons.join(', ') : undefined),
           reasons,
+          qualityDecision,
           attempt: attempt + 1,
           requestId,
         });
@@ -101,6 +104,7 @@ export async function transcribeAudio(
           skipped,
           reason: reason || (reasons ? reasons.join(', ') : undefined),
           reasons,
+          qualityDecision,
           status: response.status,
         };
       }

@@ -22,6 +22,7 @@ export interface TranslationEntry {
   timestamp: number;
   transcribeTime?: number;
   translateTime?: number;
+  totalLatency?: number;
 }
 
 export type PipelineStatus = 'idle' | 'listening' | 'recognizing' | 'translating' | 'error' | 'retrying';

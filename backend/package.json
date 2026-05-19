@@ -9,7 +9,8 @@
     "start:bg": "./start.sh",
     "stop": "./stop.sh",
     "status": "./status.sh",
-    "restart": "./restart.sh"
+    "restart": "./restart.sh",
+    "test": "node --test __tests__/*.test.js"
   },
   "dependencies": {
     "express": "^4.18.0",

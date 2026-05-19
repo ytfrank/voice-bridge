@@ -196,6 +196,49 @@ function buildAsrResponse({ text = '', quality, metadata = {}, trace, requestId,
   };
 }
 
+const AUDIO_SIGNAL_HARD_BLOCK_REASONS = new Set(['file_too_small', 'audio_too_short', 'low_signal', 'mostly_silent']);
+
+function assessAudioSignalQuality(metadata) {
+  if (metadata == null || typeof metadata !== 'object') metadata = {};
+  const durationSec = metadata.durationSec != null ? Number(metadata.durationSec) : null;
+  const fileSize = metadata.fileSize != null ? Number(metadata.fileSize) : null;
+  const rmsDb = metadata.rmsDb != null ? Number(metadata.rmsDb) : null;
+  const silentRatio = metadata.silentRatio != null ? Number(metadata.silentRatio) : null;
+  const estimatedBytesPerSecond = metadata.estimatedBytesPerSecond != null
+    ? Number(metadata.estimatedBytesPerSecond)
+    : (durationSec != null && durationSec > 0 && fileSize != null ? fileSize / durationSec : null);
+
+  const reasons = [];
+
+  if (fileSize !== null && fileSize < 512) reasons.push('file_too_small');
+  if (durationSec !== null && durationSec < 0.35) reasons.push('audio_too_short');
+  if (rmsDb !== null && rmsDb < -50) reasons.push('low_signal');
+  if (silentRatio !== null && silentRatio > 0.85) reasons.push('mostly_silent');
+  if (estimatedBytesPerSecond !== null && estimatedBytesPerSecond < 800) {
+    reasons.push('low_bitrate_suspect');
+  }
+
+  const uniqueReasons = [...new Set(reasons)];
+  let decision = 'PASS';
+  if (uniqueReasons.length > 0) {
+    decision = uniqueReasons.some((r) => AUDIO_SIGNAL_HARD_BLOCK_REASONS.has(r)) ? 'HARD_BLOCK' : 'SOFT_BLOCK';
+  }
+
+  return {
+    allowed: uniqueReasons.length === 0,
+    decision,
+    primaryReason: uniqueReasons[0] || null,
+    reasons: uniqueReasons,
+    stats: {
+      durationSec,
+      fileSize,
+      rmsDb,
+      silentRatio,
+      estimatedBytesPerSecond: estimatedBytesPerSecond !== null ? Number(estimatedBytesPerSecond.toFixed(2)) : null,
+    },
+  };
+}
+
 module.exports = {
   normalizeText,
   tokenizeEnglish,
@@ -205,5 +248,6 @@ module.exports = {
   isArticleLedContentFragment,
   isTruncatedShortPhrase,
   assessTextQuality,
+  assessAudioSignalQuality,
   buildAsrResponse,
 };

@@ -12,7 +12,7 @@ const fetch = require('node-fetch');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { assessTextQuality, buildAsrResponse } = require('./quality_gate');
+const { assessTextQuality, buildAsrResponse, assessAudioSignalQuality } = require('./quality_gate');
 
 // Load .env from backend dir or parent
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -29,6 +29,8 @@ const WHISPER_MAX_QUEUE = parseInt(process.env.WHISPER_MAX_QUEUE || '24', 10);
 const MIN_AUDIO_BYTES = parseInt(process.env.MIN_AUDIO_BYTES || '512', 10);
 const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || '0.35');
 const ASR_PROVIDER = process.env.ASR_PROVIDER || 'zhipu'; // 'zhipu' or 'local'
+const MAX_ACTIVE_ASR = parseInt(process.env.MAX_ACTIVE_ASR || '5', 10);
+const ASR_CALL_TIMEOUT_MS = parseInt(process.env.ASR_CALL_TIMEOUT_MS || '45000', 10);
 const ASR_PROVIDER_ZHIPU = 'zhipu';
 const ASR_PROVIDER_LOCAL = 'local';
 
@@ -175,6 +177,9 @@ function log(level, component, message, data = null) {
 
 // Request ID counter for tracing
 let requestCounter = 0;
+
+// Active ASR call counter (concurrency guard)
+let activeAsrCount = 0;
 
 // ===== Client Error Store (recent 100) =====
 const clientErrors = [];
@@ -877,13 +882,31 @@ async function zhipuAsr(audioPath, trace) {
   }
 }
 
-// ===== Unified ASR dispatch =====
+// ===== Unified ASR dispatch (concurrency-guarded) =====
 async function dispatchAsr(audioPath, trace, opts = {}) {
-  if (ASR_PROVIDER === ASR_PROVIDER_ZHIPU) {
-    return zhipuAsr(audioPath, trace);
+  if (activeAsrCount >= MAX_ACTIVE_ASR) {
+    const err = new Error('Too many concurrent ASR requests');
+    err.code = 'concurrency_limit';
+    throw err;
   }
-  // Fallback: local whisper
-  return whisperPool.process(audioPath, trace, opts);
+  activeAsrCount++;
+  let timeoutId;
+  try {
+    const asrCall = ASR_PROVIDER === ASR_PROVIDER_ZHIPU
+      ? zhipuAsr(audioPath, trace)
+      : whisperPool.process(audioPath, trace, opts);
+    const timeoutReject = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        const err = new Error(`ASR timed out after ${ASR_CALL_TIMEOUT_MS}ms`);
+        err.code = 'timeout';
+        reject(err);
+      }, ASR_CALL_TIMEOUT_MS);
+    });
+    return await Promise.race([asrCall, timeoutReject]);
+  } finally {
+    clearTimeout(timeoutId);
+    activeAsrCount = Math.max(0, activeAsrCount - 1);
+  }
 }
 
 function safeUnlink(filePath) {
@@ -982,8 +1005,10 @@ async function normalizeAudio(inputPath, outputPath) {
 
 function classifyAsrError(error) {
   switch (error?.code) {
+    case 'concurrency_limit':
+      return { status: 429, reason: 'concurrency_limit', message: 'Too many concurrent ASR requests. Please retry shortly.' };
     case 'timeout':
-      return { status: 504, reason: 'timeout', message: 'Whisper timeout' };
+      return { status: 504, reason: 'timeout', message: 'ASR timeout' };
     case 'queue_timeout':
       return { status: 504, reason: 'queue_timeout', message: 'Whisper queue wait expired' };
     case 'queue_full':
@@ -1020,6 +1045,8 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   const trace = attachTraceContext(req, req.body);
   let audioPath = null;
   let normalizedPath = null;
+  let tPrecheckDone = t0;
+  let tAsrDone = t0;
 
   try {
     if (!req.file) {
@@ -1028,7 +1055,12 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         sessionId: trace.sessionId,
         step: 'asr_missing_audio',
       });
-      return res.status(400).json({ error: 'No audio file provided' });
+      return res.status(400).json({
+        error: 'No audio file provided',
+        requestId: trace.requestId,
+        sessionId: trace.sessionId || undefined,
+        timings: { precheckMs: 0, asrMs: 0, totalMs: Date.now() - t0 },
+      });
     }
 
     audioPath = req.file.path;
@@ -1051,13 +1083,16 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         step: 'asr_skip_tiny_audio',
         size: req.file.size,
       });
-      return res.json(buildAsrResponse({
-        text: '',
-        trace,
-        skipped: true,
-        metadata: { emptyReason: 'audio_too_short', sourceBytes: req.file.size },
-        quality: assessTextQuality('', { emptyReason: 'audio_too_short' }),
-      }));
+      return res.json({
+        ...buildAsrResponse({
+          text: '',
+          trace,
+          skipped: true,
+          metadata: { emptyReason: 'audio_too_short', sourceBytes: req.file.size },
+          quality: assessTextQuality('', { emptyReason: 'audio_too_short' }),
+        }),
+        timings: { precheckMs: 0, asrMs: 0, totalMs: Date.now() - t0 },
+      });
     }
 
     const inputProbe = await probeAudio(audioPath);
@@ -1083,6 +1118,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       });
     }
 
+    tPrecheckDone = Date.now();
     const processStats = fs.statSync(processPath);
     const effectiveDurationSec = inputProbe?.durationSec ?? null;
 
@@ -1094,17 +1130,54 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         durationSec: effectiveDurationSec,
         size: processStats.size,
       });
-      return res.json(buildAsrResponse({
-        text: '',
-        trace,
-        skipped: true,
-        metadata: {
-          emptyReason: 'audio_too_short',
-          durationSec: effectiveDurationSec,
-          sourceBytes: processStats.size,
-        },
-        quality: assessTextQuality('', { emptyReason: 'audio_too_short', durationSec: effectiveDurationSec }),
-      }));
+      return res.json({
+        ...buildAsrResponse({
+          text: '',
+          trace,
+          skipped: true,
+          metadata: {
+            emptyReason: 'audio_too_short',
+            durationSec: effectiveDurationSec,
+            sourceBytes: processStats.size,
+          },
+          quality: assessTextQuality('', { emptyReason: 'audio_too_short', durationSec: effectiveDurationSec }),
+        }),
+        timings: { precheckMs: tPrecheckDone - t0, asrMs: 0, totalMs: Date.now() - t0 },
+      });
+    }
+
+    const audioSignal = assessAudioSignalQuality({
+      durationSec: effectiveDurationSec,
+      fileSize: processStats.size,
+      rmsDb: req.body?.rmsDb != null ? Number(req.body.rmsDb) : null,
+      silentRatio: req.body?.silentRatio != null ? Number(req.body.silentRatio) : null,
+    });
+    if (!audioSignal.allowed) {
+      const totalMs = Date.now() - t0;
+      log('warn', 'ASR', 'Audio signal quality blocked', {
+        requestId: trace.requestId,
+        sessionId: trace.sessionId,
+        step: 'asr_signal_blocked',
+        duration: totalMs,
+        reason: audioSignal.primaryReason,
+        reasons: audioSignal.reasons,
+        durationSec: effectiveDurationSec,
+        fileSize: processStats.size,
+      });
+      return res.json({
+        ...buildAsrResponse({
+          text: '',
+          trace,
+          skipped: true,
+          metadata: {
+            emptyReason: audioSignal.primaryReason,
+            durationSec: effectiveDurationSec,
+            sourceBytes: processStats.size,
+          },
+          quality: audioSignal,
+        }),
+        timings: { precheckMs: tPrecheckDone - t0, asrMs: 0, totalMs },
+      });
     }
 
     log('info', 'ASR', 'Queuing for Whisper', {
@@ -1136,9 +1209,17 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         reason: classified.reason,
         requestId: trace.requestId,
         sessionId: trace.sessionId || undefined,
+        activeAsrCount,
+        maxActiveAsr: MAX_ACTIVE_ASR,
+        timings: {
+          precheckMs: tPrecheckDone - t0,
+          asrMs: Date.now() - whisperT0,
+          totalMs: Date.now() - t0,
+        },
       });
     }
     const whisperMs = Date.now() - whisperT0;
+    tAsrDone = Date.now();
 
     const metadata = {
       ...(result.metadata || {}),
@@ -1180,13 +1261,21 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         reasons: quality.reasons,
         metadata,
       });
-      return res.json(buildAsrResponse({
-        text: '',
-        trace,
-        skipped: true,
-        metadata,
-        quality,
-      }));
+      return res.json({
+        ...buildAsrResponse({
+          text: '',
+          trace,
+          skipped: true,
+          metadata,
+          quality,
+        }),
+        timings: {
+          precheckMs: tPrecheckDone - t0,
+          asrMs: whisperMs,
+          qualityMs: Date.now() - tAsrDone,
+          totalMs: Date.now() - t0,
+        },
+      });
     }
 
     const totalMs = Date.now() - t0;
@@ -1202,13 +1291,21 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       metadata,
     });
 
-    return res.json(buildAsrResponse({
-      text: quality.normalizedText,
-      trace,
-      metadata,
-      quality,
-      skipped: false,
-    }));
+    return res.json({
+      ...buildAsrResponse({
+        text: quality.normalizedText,
+        trace,
+        metadata,
+        quality,
+        skipped: false,
+      }),
+      timings: {
+        precheckMs: tPrecheckDone - t0,
+        asrMs: whisperMs,
+        qualityMs: Date.now() - tAsrDone,
+        totalMs: Date.now() - t0,
+      },
+    });
   } catch (err) {
     log('error', 'ASR', 'Unhandled error', {
       requestId: trace.requestId,
@@ -1218,7 +1315,17 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       error: err.message,
       stack: err.stack?.substring(0, 500),
     });
-    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+    return res.status(500).json({
+      error: 'Internal server error',
+      detail: err.message,
+      requestId: trace.requestId,
+      sessionId: trace.sessionId || undefined,
+      timings: {
+        precheckMs: tPrecheckDone - t0,
+        asrMs: tAsrDone > t0 ? Date.now() - tAsrDone : 0,
+        totalMs: Date.now() - t0,
+      },
+    });
   } finally {
     if (normalizedPath && normalizedPath !== audioPath) safeUnlink(normalizedPath);
     safeUnlink(audioPath);
