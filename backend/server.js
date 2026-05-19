@@ -1244,6 +1244,12 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         reason,
         requestId: trace.requestId,
         sessionId: trace.sessionId || undefined,
+        timings: {
+          precheckMs: tPrecheckDone - t0,
+          asrMs: whisperMs,
+          qualityMs: 0,
+          totalMs: Date.now() - t0,
+        },
       });
     }
 
