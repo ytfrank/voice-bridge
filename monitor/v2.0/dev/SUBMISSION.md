@@ -4,7 +4,8 @@
 
 - 项目：voice-bridge V2.0
 - 分支：hermes/v2.0
-- Commit：8b69637（V2.0代码实现提交；本SUBMISSION后续如有文档提交，以远端最新提交为准）
+- 代码实现 Commit：8b69637
+- 当前提测文档 Commit：8c4dfd5（若后续仅补 handoff 文档，以远端 HEAD 为准；代码实现不变）
 - 基线：837d3a0（V1.7 QA conditional pass）
 - 提测时间：2026-05-19
 
