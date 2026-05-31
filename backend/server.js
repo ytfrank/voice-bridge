@@ -28,11 +28,13 @@ const WHISPER_QUEUE_TTL_MS = parseInt(process.env.WHISPER_QUEUE_TTL_MS || '20000
 const WHISPER_MAX_QUEUE = parseInt(process.env.WHISPER_MAX_QUEUE || '24', 10);
 const MIN_AUDIO_BYTES = parseInt(process.env.MIN_AUDIO_BYTES || '512', 10);
 const MIN_AUDIO_DURATION_SEC = parseFloat(process.env.MIN_AUDIO_DURATION_SEC || '0.35');
-const ASR_PROVIDER = process.env.ASR_PROVIDER || 'zhipu'; // 'zhipu' or 'local'
+const ASR_PROVIDER = process.env.ASR_PROVIDER || 'deepgram'; // 'deepgram', 'zhipu', or 'local'
 const MAX_ACTIVE_ASR = parseInt(process.env.MAX_ACTIVE_ASR || '5', 10);
 const ASR_CALL_TIMEOUT_MS = parseInt(process.env.ASR_CALL_TIMEOUT_MS || '45000', 10);
+const ASR_PROVIDER_DEEPGRAM = 'deepgram';
 const ASR_PROVIDER_ZHIPU = 'zhipu';
 const ASR_PROVIDER_LOCAL = 'local';
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 
 // Venv python path
 const VENV_PYTHON = path.join(__dirname, 'venv', 'bin', 'python');
@@ -882,6 +884,77 @@ async function zhipuAsr(audioPath, trace) {
   }
 }
 
+// ===== Deepgram Nova-3 ASR (REST API) =====
+const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
+
+async function deepgramAsr(audioPath, trace) {
+  const t0 = Date.now();
+
+  if (!DEEPGRAM_API_KEY) {
+    return { success: false, error: 'Deepgram API key not configured', text: '' };
+  }
+
+  try {
+    const audioBuffer = fs.readFileSync(audioPath);
+    const ext = path.extname(audioPath).toLowerCase();
+    const mimeMap = {
+      '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4',
+      '.ogg': 'audio/ogg', '.webm': 'audio/webm', '.flac': 'audio/flac',
+    };
+    const mimetype = mimeMap[ext] || 'audio/wav';
+
+    const response = await fetch(DEEPGRAM_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${DEEPGRAM_API_KEY}`,
+        'Content-Type': mimetype,
+      },
+      body: audioBuffer,
+      timeout: 30000,
+    });
+
+    const elapsed = Date.now() - t0;
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      log('error', 'ASR', `Deepgram API error ${response.status}`, {
+        requestId: trace.requestId,
+        step: 'deepgram_asr_error',
+        duration: elapsed,
+        status: response.status,
+        error: errBody.substring(0, 200),
+      });
+      return { success: false, error: `Deepgram API ${response.status}: ${errBody.substring(0, 100)}`, text: '' };
+    }
+
+    const data = await response.json();
+    const text = (data.results?.channels?.[0]?.alternatives?.[0]?.transcript || '').trim();
+
+    log('info', 'ASR', `Deepgram Nova-3 done (${elapsed}ms)`, {
+      requestId: trace.requestId,
+      step: 'deepgram_asr_done',
+      duration: elapsed,
+      textLen: text.length,
+      text: text.substring(0, 120),
+    });
+
+    return {
+      success: text.length > 0,
+      text,
+      metadata: { provider: 'deepgram', model: 'nova-3', asrMs: elapsed },
+    };
+  } catch (err) {
+    const elapsed = Date.now() - t0;
+    log('error', 'ASR', `Deepgram ASR error`, {
+      requestId: trace.requestId,
+      step: 'deepgram_asr_error',
+      duration: elapsed,
+      error: err.message,
+    });
+    return { success: false, error: err.message, text: '' };
+  }
+}
+
 // ===== Unified ASR dispatch (concurrency-guarded) =====
 async function dispatchAsr(audioPath, trace, opts = {}) {
   if (activeAsrCount >= MAX_ACTIVE_ASR) {
@@ -892,9 +965,11 @@ async function dispatchAsr(audioPath, trace, opts = {}) {
   activeAsrCount++;
   let timeoutId;
   try {
-    const asrCall = ASR_PROVIDER === ASR_PROVIDER_ZHIPU
-      ? zhipuAsr(audioPath, trace)
-      : whisperPool.process(audioPath, trace, opts);
+    const asrCall = ASR_PROVIDER === ASR_PROVIDER_DEEPGRAM
+      ? deepgramAsr(audioPath, trace)
+      : ASR_PROVIDER === ASR_PROVIDER_ZHIPU
+        ? zhipuAsr(audioPath, trace)
+        : whisperPool.process(audioPath, trace, opts);
     const timeoutReject = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         const err = new Error(`ASR timed out after ${ASR_CALL_TIMEOUT_MS}ms`);
