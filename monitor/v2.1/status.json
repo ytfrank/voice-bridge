@@ -1,0 +1,73 @@
+{
+  "project": "voice-bridge",
+  "version": "v2.1",
+  "description": "Voice Bridge V2.1 - 安卓版（平台移植+市场发布）",
+  "created_at": "2026-06-02T00:08:53+08:00",
+  "artifacts_base_path": "/Users/bibo/projects/voice-bridge/monitor/v2.1",
+  "workflow": {
+    "current_stage": "requirement",
+    "stage_status": "in_progress",
+    "stage_owner": "doraemon",
+    "stage_entered_at": "2026-06-02T00:08:53+08:00",
+    "last_transition_at": "2026-06-02T00:08:53+08:00",
+    "last_transition_by": "doraemon",
+    "last_transition_note": "项目启动，编写需求文档"
+  },
+  "roles": {
+    "pm": "doraemon",
+    "dev": "peter",
+    "qa": "guard",
+    "ops": "atlas"
+  },
+  "runtime": {
+    "last_runtime_update_at": "2026-06-02T00:08:53+08:00",
+    "last_runtime_update_by": "doraemon",
+    "active_role": "doraemon",
+    "active_tasks": [
+      "编写需求文档",
+      "等待波哥确认"
+    ],
+    "latest_commit": "9cb8d49",
+    "latest_artifact_update": "2026-06-02T00:08:53+08:00",
+    "latest_evidence_refs": [
+      "doc:monitor/v2.1/requirements/REQUIREMENTS.md"
+    ],
+    "current_blockers": [],
+    "current_risks": [
+      "Expo EAS Build安卓构建可能需要额外配置",
+      "expo-audio安卓兼容性未验证"
+    ],
+    "waiting_on": "波哥确认需求"
+  },
+  "official": {
+    "current_assessment": "requirement_draft_ready",
+    "blockers": [],
+    "risks": [],
+    "next_action": "波哥确认需求后，A2A通知Peter开始开发",
+    "decisions": [
+      {
+        "at": "2026-06-02T00:08:53+08:00",
+        "by": "bibo",
+        "decision": "启动Voice Bridge V2.1安卓版项目",
+        "rationale": "需要在小米手机上使用，验证AI Ops流水线"
+      }
+    ],
+    "updated_at": "2026-06-02T00:08:53+08:00"
+  },
+  "artifacts": {
+    "requirements": {
+      "path": "monitor/v2.1/requirements/REQUIREMENTS.md",
+      "status": "draft",
+      "updated_at": "2026-06-02T00:08:53+08:00"
+    }
+  },
+  "history": [
+    {
+      "at": "2026-06-02T00:08:53+08:00",
+      "from": null,
+      "to": "requirement",
+      "by": "doraemon",
+      "note": "项目启动，编写V2.1安卓版需求文档"
+    }
+  ]
+}
