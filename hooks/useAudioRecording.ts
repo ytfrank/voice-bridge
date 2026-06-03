@@ -4,8 +4,18 @@
  */
 
 import { useRef, useCallback, useEffect } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
-import { useAudioRecorder, useAudioRecorderState, RecordingOptions, setAudioModeAsync, IOSOutputFormat, AudioQuality } from 'expo-audio';
+import { AppState, AppStateStatus, PermissionsAndroid, Platform } from 'react-native';
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  RecordingOptions,
+  setAudioModeAsync,
+  IOSOutputFormat,
+  AudioQuality,
+  getRecordingPermissionsAsync,
+  requestRecordingPermissionsAsync,
+  PermissionResponse,
+} from 'expo-audio';
 import {
   CHUNK_DURATION_MS,
   CLIENT_CHUNK_MIN_PEAK_DB,
@@ -27,6 +37,8 @@ import { analytics } from '../services/analyticsService';
 const WATCHDOG_INTERVAL_MS = 30000;
 const RECOVERY_DELAY_MS = 500;
 const BACKGROUND_RECOVERY_DELAY_MS = 1500;
+export const MICROPHONE_PERMISSION_DENIED_MESSAGE =
+  '麦克风权限未开启，请在系统设置中允许 Voice Bridge 使用麦克风后重试';
 
 // Recording options for expo-audio
 const recordingOptions: RecordingOptions = {
@@ -120,6 +132,43 @@ async function configureRecordingAudioMode() {
     interruptionMode: 'duckOthers',
     shouldPlayInBackground: false,
   });
+}
+
+type RecordingPermissionApi = {
+  getRecordingPermissionsAsync?: () => Promise<PermissionResponse>;
+  requestRecordingPermissionsAsync?: () => Promise<PermissionResponse>;
+  platformOS?: typeof Platform.OS;
+};
+
+function isPermissionGranted(permission?: PermissionResponse): boolean {
+  return permission?.granted === true || permission?.status === 'granted';
+}
+
+export async function ensureMicrophoneRecordingPermission({
+  getRecordingPermissionsAsync: getPermission = getRecordingPermissionsAsync,
+  requestRecordingPermissionsAsync: requestPermission = requestRecordingPermissionsAsync,
+  platformOS = Platform.OS,
+}: RecordingPermissionApi = {}): Promise<void> {
+  if (getPermission && requestPermission) {
+    const current = await getPermission();
+    if (isPermissionGranted(current)) return;
+
+    const requested = current.canAskAgain === false ? current : await requestPermission();
+    if (isPermissionGranted(requested)) return;
+
+    throw new Error(MICROPHONE_PERMISSION_DENIED_MESSAGE);
+  }
+
+  if (platformOS === 'android') {
+    const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+    const hasPermission = await PermissionsAndroid.check(permission);
+    if (hasPermission) return;
+
+    const result = await PermissionsAndroid.request(permission);
+    if (result === PermissionsAndroid.RESULTS.GRANTED) return;
+
+    throw new Error(MICROPHONE_PERMISSION_DENIED_MESSAGE);
+  }
 }
 
 export function useAudioRecording() {
@@ -607,6 +656,7 @@ export function useAudioRecording() {
 
       chunkQueueRef.current = new OrderedChunkQueue(processChunk);
 
+      await ensureMicrophoneRecordingPermission();
       await configureRecordingAudioMode();
 
       if (!sm.transition(RecordingState.PREPARING)) {
@@ -691,6 +741,7 @@ export function useAudioRecording() {
       sm.transition(RecordingState.IDLE);
       setRecording(false);
       setPipelineStatus('error');
+      throw err instanceof Error ? err : new Error(String(err));
     } finally {
       isStartStopBusyRef.current = false;
     }

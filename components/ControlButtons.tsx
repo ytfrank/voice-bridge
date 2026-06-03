@@ -40,7 +40,9 @@ export function ControlButtons() {
       }
     } catch (err) {
       analytics.trackError(err, { phase: 'recording_toggle', isRecording });
-      Alert.alert('录音操作失败', isRecording ? '停止录音失败，请重试' : '开始录音失败，请检查麦克风权限后重试');
+      const fallbackMessage = isRecording ? '停止录音失败，请重试' : '开始录音失败，请检查麦克风权限后重试';
+      const message = err instanceof Error && err.message ? err.message : fallbackMessage;
+      Alert.alert('录音操作失败', message);
     } finally {
       setIsTogglingRecording(false);
     }
