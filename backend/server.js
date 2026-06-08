@@ -938,11 +938,9 @@ async function deepgramAsr(audioPath, trace) {
       text: text.substring(0, 120),
     });
 
-    return {
-      success: text.length > 0,
-      text,
-      metadata: { provider: 'deepgram', model: 'nova-3', asrMs: elapsed },
-    };
+    const metadata = { provider: 'deepgram', model: 'nova-3', asrMs: elapsed };
+    if (!text) metadata.emptyReason = 'empty_transcript';
+    return { success: true, text, metadata };
   } catch (err) {
     const elapsed = Date.now() - t0;
     log('error', 'ASR', `Deepgram ASR error`, {

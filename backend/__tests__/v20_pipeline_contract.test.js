@@ -94,3 +94,36 @@ test('V2.0 frontend guard: empty/skipped ASR branch returns before append/transl
   assert.match(emptyBranch, /result\.skipped/, 'empty branch must inspect backend skipped flag for observability');
   assert.match(emptyBranch, /return;/, 'empty/skipped branch must return before appending or translating');
 });
+
+test('V2.0 Deepgram contract: empty transcript is a skipped response, not ASR failure', () => {
+  const serverPath = path.join(process.cwd(), 'backend', 'server.js');
+  const source = fs.readFileSync(serverPath, 'utf8');
+  const deepgramStart = source.indexOf('async function deepgramAsr');
+  const dispatchStart = source.indexOf('// ===== Unified ASR dispatch');
+  const deepgramSource = source.slice(deepgramStart, dispatchStart);
+
+  assert.ok(deepgramStart >= 0, 'deepgramAsr must exist');
+  assert.ok(dispatchStart > deepgramStart, 'deepgramAsr source slice must be valid');
+  assert.doesNotMatch(
+    deepgramSource,
+    /success:\s*text\.length\s*>\s*0/,
+    'empty Deepgram transcript must not be classified as ASR failure',
+  );
+  assert.match(deepgramSource, /emptyReason\s*=\s*['"]empty_transcript['"]/);
+  assert.match(deepgramSource, /return\s+\{\s*success:\s*true,\s*text,\s*metadata\s*\}/);
+
+  const metadata = {
+    provider: 'deepgram',
+    model: 'nova-3',
+    asrMs: 432,
+    emptyReason: 'empty_transcript',
+  };
+  const quality = assessTextQuality('', metadata);
+  const response = buildAsrResponse({ text: '', quality, metadata });
+
+  assert.equal(quality.allowed, false);
+  assert.equal(response.skipped, true);
+  assert.equal(response.reason, 'empty_transcript');
+  assert.equal(response.asr.metadata.provider, 'deepgram');
+  assert.equal(response.asr.metadata.emptyReason, 'empty_transcript');
+});

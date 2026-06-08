@@ -113,3 +113,50 @@ V2.0 的主矛盾不是 UI，而是 **音频质量门控 + ASR结果可信度 + 
 
 - 首轮实现 + 单测：2~3小时
 - 自测数据 + SUBMISSION：当天内
+
+---
+
+## 7. Round2 Blocking Fix — Deepgram 静音空 transcript
+
+### 背景
+
+Guard 在 V2.0 回归中发现：静音 5s 音频经 Deepgram 返回空 transcript 时，服务端没有返回 `skipped=true`，而是进入 ASR 错误分支返回 500。项目已从 test 回退到 develop，本轮为回退后第一轮修复。
+
+### 根因判断
+
+- `deepgramAsr()` 当前用 `success: text.length > 0` 判断结果成功。
+- Deepgram 对静音音频返回 HTTP 200 且空 transcript 时，`text === ''` 被标记为 `success:false`。
+- `/api/transcribe` 后续 `if (!result.success)` 分支直接返回 500，绕过 `buildAsrResponse()`。
+- `buildAsrResponse()` 本身已有 `finalSkipped = Boolean(skipped || !normalizedText)`，因此正确路径应是让空 transcript 作为正常 ASR 结果进入质量门控/响应构建。
+
+### 修复方案
+
+改动范围：
+- `backend/server.js`
+- `backend/__tests__/v20_pipeline_contract.test.js` 或新增同目录回归测试
+- `.env`
+- `monitor/v2.0/dev/SUBMISSION_round2.md`
+
+具体方案：
+- `deepgramAsr()` 对 Deepgram HTTP 200 响应统一返回 `success:true`，即使 transcript 为空。
+- 空 transcript metadata 增加可观测字段，如 `emptyReason: 'empty_transcript'`、`provider:'deepgram'`、`model:'nova-3'`、`asrMs`。
+- 保持真实 Deepgram HTTP/API 错误仍为 `success:false`，继续走 500/错误分支。
+- 根 `.env` 补 `DEEPGRAM_API_KEY`，与后端启动所需环境保持一致；提交信息和群消息不暴露密钥值。
+- 增加回归测试，证明 Deepgram 空 transcript 不应被当成 ASR failure，而应进入 skipped 正常响应路径。
+
+### 编排
+
+- 本次是否拆分：是，小修复采用最小开发包。
+- 计划启动 subagent：1（Backend Fix Agent）。
+- 实际已启动 subagent：1。
+- 当前活跃 subagent：0。
+- 偏差原因：Backend Fix Agent 落盘核心 `backend/server.js` 改动后长时间无后续输出。
+- 修正动作：Peter 已按主线程接管规则停止悬挂进程，补齐回归测试、`.env`、`SUBMISSION_round2.md`、验证与提交。
+
+### 验收标准
+
+- `npm test` 或 `cd backend && npm test` 通过。
+- 针对静音/空 transcript 的回归测试通过。
+- `git diff --check` 通过。
+- 仅提交本轮必要文件，不混入历史 dirty 文件。
+- 产出 `monitor/v2.0/dev/SUBMISSION_round2.md`，并在 commit/push 后 A2A 通知小叮当提测。
