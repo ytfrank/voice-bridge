@@ -6,7 +6,7 @@
 - 分支：`hermes/v2.0`
 - 轮次：Round2 blocking fix
 - 提交者：Peter
-- 修复 Commit：5a24424
+- 修复 Commit：c589692
 - 提测时间：2026-06-08 14:51:12 +0800
 
 ## 本次是否拆分
